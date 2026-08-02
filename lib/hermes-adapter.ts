@@ -1132,6 +1132,8 @@ export class SameOriginHermesAdapter implements HermesAdapter {
 
   private gatewayPath(path: string): string {
     const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-    return basePath ? `${basePath}${path}` : path;
+    return basePath && (window.location.pathname === basePath || window.location.pathname.startsWith(`${basePath}/`))
+      ? `${basePath}${path}`
+      : path;
   }
 }

@@ -3,6 +3,7 @@
 import { Children, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type UIEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { hermesAdapterMock } from "../lib/public-demo-adapter";
 import {
   SameOriginHermesAdapter,
   type HermesApprovalRequest,
@@ -25,7 +26,6 @@ import {
   type HermesSkill,
   type HermesWorkspaceSnapshot
 } from "../lib/hermes-adapter";
-import { hermesAdapterMock } from "../lib/mock-adapters";
 import {
   appendReasoning,
   appendText,
@@ -42,8 +42,6 @@ import {
 } from "../lib/chat-transcript";
 
 const storageKey = "hermes-workspace-ui.v1";
-const demoMode = process.env.NEXT_PUBLIC_HERMES_MODE === "demo";
-const publicBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const modelShortlistKey = "hermes-workspace-ui.model-shortlist.v1";
 const skins = [
   { id: "myosotis", name: "Myosotis", description: "The original lavender workspace" },
@@ -121,6 +119,8 @@ function toolEventDetail(payload: Record<string, unknown>) {
 }
 
 export function AppShell() {
+  const demoMode = process.env.NEXT_PUBLIC_HERMES_MODE === "demo";
+  const publicBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const [activeProfile, setActiveProfile] = useState("default");
   const [activeSession, setActiveSession] = useState("");
   const [activePanel, setActivePanel] = useState<"chat" | "cron">("chat");
@@ -217,7 +217,7 @@ export function AppShell() {
       })
       .catch(error => setLoadError(error instanceof Error ? error.message : "Hermes Gateway connection failed."));
     return () => adapter.close();
-  }, [gatewayRetry]);
+  }, [demoMode, gatewayRetry, publicBasePath]);
 
   const session = useMemo(
     () => workspace.sessions.find(item => item.id === activeSession) ?? workspace.sessions[0],
