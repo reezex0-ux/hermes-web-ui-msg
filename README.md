@@ -1,17 +1,29 @@
-# Hermes Workspace
+# Hermes Web UI
 
-Hermes Workspace is a static web UI for a Hermes Dashboard. It has two safe modes:
+A static, self-hostable web interface for a Hermes Dashboard. It keeps the Dashboard as the source of truth for authentication, profiles, sessions, messages, tools, and settings.
 
-- **Demo:** GitHub Pages renders generic example sessions and never contacts a Gateway.
-- **Live self-hosting:** Docker serves the UI and reverse-proxies the browser's same-origin `/api`, `/auth`, and WebSocket routes to your own Hermes Dashboard.
+[Try the live demo](https://reezex0-ux.github.io/hermes-workspace-public/)
 
-No credentials, browser cookies, session transcripts, server names, or deployment paths are included in this repository.
+![Hermes Web UI empty session](public/hermes-session-hero.png)
 
-## Try the demo
+## What it includes
 
-Enable GitHub Pages in the repository settings. The included workflow publishes a demo build from `main`.
+- Chat workspace with session browsing, search, transcript rendering, tool activity, approvals, and message actions.
+- Settings for visual skins, model controls, profiles, skills, MCP servers, plugins, and cron jobs when supported by your Dashboard.
+- A resizable file panel that stays closed until requested.
+- Installable standalone PWA support.
+- A GitHub Pages demo mode that uses only generic example data.
 
-## Install against your Hermes Dashboard
+## Two safe modes
+
+| Mode | Use case | Gateway access |
+| --- | --- | --- |
+| Demo | GitHub Pages preview and UI evaluation | Never contacts a Gateway |
+| Live | Your own self-hosted Dashboard | Same-origin reverse proxy only |
+
+The repository contains no runtime credentials, browser cookies, session transcripts, server names, or private deployment paths.
+
+## Run it with your Hermes Dashboard
 
 Requirements: Docker Compose and an already-running Hermes Dashboard that you control.
 
@@ -25,23 +37,21 @@ docker compose up --build -d
 
 Open `http://localhost:8080`. Put the container behind your own HTTPS proxy before exposing it beyond your machine or private network.
 
-### Required configuration
+### Configuration
 
 | Variable | Meaning |
 | --- | --- |
 | `HERMES_UPSTREAM` | Dashboard URL reachable from the container. |
 | `HERMES_BACKEND_HOST` | Exact Host header accepted by that Dashboard. |
 | `HERMES_BACKEND_ORIGIN` | Matching origin used only for the Gateway WebSocket handshake. |
-| `NEXT_PUBLIC_HERMES_MODE` | Keep `live` for a real connection; use `demo` for example data only. |
+| `NEXT_PUBLIC_HERMES_MODE` | `live` for a real connection; `demo` for example data only. |
 | `NEXT_PUBLIC_BASE_PATH` | Optional subpath, such as `/workspace`. |
 
-The Dashboard remains the authentication authority. Do not place dashboard tokens, cookies, API keys, or private endpoint URLs in frontend source or commit them to `.env`.
+For OAuth-protected Dashboards, register the public HTTPS origin you deploy and use that same origin when starting the Dashboard.
 
-For OAuth-protected Dashboards, register the public HTTPS origin you deploy and use that same origin when starting the Dashboard. The reverse proxy deliberately keeps browser authentication same-origin and supports WebSocket upgrades without exposing credentials to JavaScript.
+## Security boundary
 
-## Give this to an agent
-
-> Clone this repository, copy `.env.example` to `.env`, set it to the Hermes Dashboard I control, run `docker compose up --build -d`, and verify that `http://localhost:8080` loads. Do not commit `.env` or copy Dashboard credentials into browser code.
+Hermes remains the authentication authority. The browser reaches the Dashboard through same-origin `/api`, `/auth`, and WebSocket routes; no Dashboard token, cookie, API key, or private endpoint belongs in frontend source or in Git.
 
 ## Development
 
@@ -50,8 +60,18 @@ npm ci
 npm run build
 ```
 
-Build a demo locally with `NEXT_PUBLIC_HERMES_MODE=demo`. For a GitHub Pages project site, also set `NEXT_PUBLIC_BASE_PATH` to the repository path.
+For a local demo build:
 
-## Before publishing
+```bash
+NEXT_PUBLIC_HERMES_MODE=demo npm run build
+```
 
-Choose and add a license that matches how you want others to reuse the code.
+For a GitHub Pages project site, also set `NEXT_PUBLIC_BASE_PATH` to the repository path.
+
+## Give this to an agent
+
+> Clone this repository, copy `.env.example` to `.env`, configure it for the Hermes Dashboard I control, run `docker compose up --build -d`, and verify that `http://localhost:8080` loads. Do not commit `.env` or place Dashboard credentials in browser code.
+
+## License
+
+No license has been selected yet. Add one before inviting broader reuse or redistribution.
