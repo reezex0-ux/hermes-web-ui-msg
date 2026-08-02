@@ -174,7 +174,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .empty-state strong { display: block; color: var(--text); font-size: 13px; }
 .empty-state p { margin: 7px 0 0; font-size: 12px; line-height: 1.55; }
 .new-session-welcome { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 0; padding: 12px 0 28px; }
-.new-session-welcome img { display: block; width: min(780px, 100%); max-height: min(70vh, 680px); height: auto; object-fit: contain; opacity: .9; mix-blend-mode: multiply; }
+.new-session-welcome img { display: block; width: min(780px, 100%); max-height: min(70vh, 680px); height: auto; object-fit: contain; opacity: .64; filter: saturate(.62) contrast(.9) brightness(1.04); mix-blend-mode: multiply; mask-image: radial-gradient(ellipse 70% 68% at center, #000 58%, transparent 100%); }
 .message { position: relative; max-width: min(720px, 94%); padding: 0; border: 0; background: transparent; box-shadow: none; content-visibility: auto; contain-intrinsic-size: auto 160px; }
 .message.show-actions { padding-bottom: 26px; }
 .message.user { justify-self: end; margin-right: clamp(14px, 2vw, 24px); padding: 13px 15px; border: 1px solid #e5dced; border-radius: var(--radius); background: var(--accent-soft); }
