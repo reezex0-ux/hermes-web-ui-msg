@@ -10,6 +10,20 @@ A static, self-hostable web interface for a Hermes Dashboard. It keeps the Dashb
 
 > **Demo data only — no Hermes backend connection.**
 
+## Interface
+
+### Workspace and sessions
+
+![Workspace sidebar and session](public/screenshots/session-sidebar.png)
+
+### Tool execution and approval
+
+![Tool execution and approval](public/screenshots/tool-approval.png)
+
+### Appearance, skills, and MCP settings
+
+![Settings sheet](public/screenshots/settings.png)
+
 ## What it includes
 
 - Chat workspace with session browsing, search, transcript rendering, tool activity, approvals, and message actions.
