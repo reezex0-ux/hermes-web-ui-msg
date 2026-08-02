@@ -74,4 +74,4 @@ For a GitHub Pages project site, also set `NEXT_PUBLIC_BASE_PATH` to the reposit
 
 ## License
 
-No license has been selected yet. Add one before inviting broader reuse or redistribution.
+Released under the [MIT License](LICENSE).
