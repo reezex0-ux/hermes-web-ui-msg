@@ -1,0 +1,15 @@
+services:
+  workspace:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_HERMES_MODE: ${NEXT_PUBLIC_HERMES_MODE:-live}
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+    environment:
+      HERMES_UPSTREAM: ${HERMES_UPSTREAM}
+      HERMES_BACKEND_HOST: ${HERMES_BACKEND_HOST}
+      HERMES_BACKEND_ORIGIN: ${HERMES_BACKEND_ORIGIN}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "8080:8080"

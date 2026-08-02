@@ -1,0 +1,31 @@
+:8080 {
+  encode zstd gzip
+
+  @gateway_ws path /api/ws
+  handle @gateway_ws {
+    reverse_proxy {$HERMES_UPSTREAM} {
+      header_up Host {$HERMES_BACKEND_HOST}
+      header_up Origin {$HERMES_BACKEND_ORIGIN}
+    }
+  }
+
+  @gateway_api path /api/*
+  handle @gateway_api {
+    reverse_proxy {$HERMES_UPSTREAM} {
+      header_up Host {$HERMES_BACKEND_HOST}
+    }
+  }
+
+  @dashboard_auth path /auth/*
+  handle @dashboard_auth {
+    reverse_proxy {$HERMES_UPSTREAM} {
+      header_up Host {$HERMES_BACKEND_HOST}
+    }
+  }
+
+  handle {
+    root * /srv
+    try_files {path} /index.html
+    file_server
+  }
+}
