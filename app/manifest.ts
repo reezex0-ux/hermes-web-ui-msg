@@ -5,9 +5,9 @@ export const dynamic = "force-static";
 export default function manifest(): MetadataRoute.Manifest {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   return {
-    name: "Hermes Workspace",
-    short_name: "Hermes",
-    description: "Hermes Workspace",
+    name: "Hermes Web UI MSG",
+    short_name: "Hermes MSG",
+    description: "Unofficial community web UI for Hermes Dashboard",
     start_url: `${basePath}/`,
     scope: `${basePath}/`,
     display: "standalone",

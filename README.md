@@ -1,10 +1,14 @@
-# Hermes Web UI
+# Hermes Web UI MSG
+
+> **Unofficial community project.** Hermes Web UI MSG is not an official Hermes UI.
 
 A static, self-hostable web interface for a Hermes Dashboard. It keeps the Dashboard as the source of truth for authentication, profiles, sessions, messages, tools, and settings.
 
-[Try the live demo](https://reezex0-ux.github.io/hermes-workspace-public/)
+[Try the live demo](https://reezex0-ux.github.io/hermes-web-ui-msg/)
 
-![Hermes Web UI empty session](public/hermes-session-hero.png)
+![Hermes Web UI MSG empty session](public/hermes-session-hero.png)
+
+> **Demo data only — no Hermes backend connection.**
 
 ## What it includes
 
@@ -28,8 +32,8 @@ The repository contains no runtime credentials, browser cookies, session transcr
 Requirements: Docker Compose and an already-running Hermes Dashboard that you control.
 
 ```bash
-git clone https://github.com/YOUR_ACCOUNT/hermes-workspace-public.git
-cd hermes-workspace-public
+git clone https://github.com/YOUR_ACCOUNT/hermes-web-ui-msg.git
+cd hermes-web-ui-msg
 cp .env.example .env
 # Edit .env with your own Dashboard values.
 docker compose up --build -d

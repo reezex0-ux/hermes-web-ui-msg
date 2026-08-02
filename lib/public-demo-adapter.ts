@@ -16,8 +16,15 @@ const publicDemoSnapshot: HermesWorkspaceSnapshot = {
       id: "session-alpha", profileId: "default", title: "Product review", updatedAt: "now", status: "working",
       messages: [
         mockMessage("user", "Review the latest product notes.", "16:26", 0),
-        mockMessage("assistant", "This demo renders example data. Connect your Hermes Gateway to work with your own sessions.", "16:27", 1)
-      ]
+        {
+          ...mockMessage("assistant", "This demo renders example data. Connect your Hermes Gateway to work with your own sessions.", "16:27", 1),
+          parts: [
+            { id: "mock-1-text", type: "text" as const, content: "This demo renders example data. Connect your Hermes Gateway to work with your own sessions." },
+            { id: "mock-1-tool", type: "tool" as const, tool: { id: "mock-tool-build", name: "npm run build", context: "release check", status: "complete" as const, detail: "Build completed in 2.1s.", elapsedMs: 2100 } }
+          ]
+        }
+      ],
+      approval: { command: "npm run build", description: "Example approval request rendered with demo data only.", choices: ["once", "deny"] }
     },
     {
       id: "session-beta", profileId: "default", title: "Release checklist", updatedAt: "14:02", status: "idle",
