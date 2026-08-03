@@ -13,6 +13,10 @@ const publicDemoSnapshot: HermesWorkspaceSnapshot = {
   ] as HermesProfile[],
   sessions: [
     {
+      id: "session-new", profileId: "default", title: "New conversation", updatedAt: "now", status: "idle",
+      messages: []
+    },
+    {
       id: "session-alpha", profileId: "default", title: "Product review", updatedAt: "now", status: "working",
       messages: [
         mockMessage("user", "Review the latest product notes.", "16:26", 0),
