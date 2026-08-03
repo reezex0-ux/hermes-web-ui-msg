@@ -3,16 +3,19 @@
 import { Children, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type UIEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { createPortal } from "react-dom";
 import { hermesAdapterMock } from "../lib/public-demo-adapter";
 import {
   SameOriginHermesAdapter,
   type HermesApprovalRequest,
   type HermesCronJob,
   type HermesCronJobDraft,
+  type HermesCronDeliveryTarget,
   type HermesCronRun,
   type HermesFileEntry,
   type HermesGatewayEvent,
   type HermesMcpServerDraft,
+  type HermesMcpCatalogEntry,
   type HermesMcpServer,
   type HermesModelAssignment,
   type HermesModelOption,
@@ -24,6 +27,11 @@ import {
   type HermesSessionSearchResult,
   type HermesSlashCommand,
   type HermesSkill,
+  type HermesSkillHubBrowse,
+  type HermesSkillHubEntry,
+  type HermesSkillHubPreview,
+  type HermesSkillHubScan,
+  type HermesSkillHubSource,
   type HermesWorkspaceSnapshot
 } from "../lib/hermes-adapter";
 import {
@@ -43,9 +51,13 @@ import {
 
 const storageKey = "hermes-workspace-ui.v1";
 const modelShortlistKey = "hermes-workspace-ui.model-shortlist.v1";
+const sessionFavoritesKey = "hermes-workspace-ui.session-favorites.v1";
 const skins = [
   { id: "myosotis", name: "Myosotis", description: "The original lavender workspace" },
+  { id: "ink", name: "Ink", description: "Pure black with white text" },
   { id: "midnight", name: "Night", description: "A low-light dark workspace" },
+  { id: "teal", name: "Teal", description: "Deep sea green and aqua" },
+  { id: "amber", name: "Amber", description: "Warm gold and toasted umber" },
   { id: "ocean", name: "Ocean", description: "Cool blue and slate tones" },
   { id: "sage", name: "Sage", description: "Muted green and warm neutrals" },
   { id: "rose", name: "Rose", description: "Soft pink and plum tones" }
@@ -140,6 +152,7 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceRailOpen, setWorkspaceRailOpen] = useState(false);
   const [workspaceRailWidth, setWorkspaceRailWidth] = useState(400);
+  const [favoriteSessions, setFavoriteSessions] = useState<string[]>([]);
   const liveAdapter = useRef<SameOriginHermesAdapter | null>(null);
   const openRequest = useRef(0);
   const railResize = useRef<{ startX: number; width: number } | null>(null);
@@ -161,6 +174,15 @@ export function AppShell() {
     setReady(true);
   }, []);
 
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(sessionFavoritesKey) ?? "[]");
+      if (Array.isArray(saved)) setFavoriteSessions(saved.filter((value): value is string => typeof value === "string"));
+    } catch {
+      window.localStorage.removeItem(sessionFavoritesKey);
+    }
+  }, []);
+
   useEffect(() => () => liveAdapter.current?.close(), []);
 
   useEffect(() => {
@@ -169,6 +191,10 @@ export function AppShell() {
     document.documentElement.style.colorScheme = skin === "midnight" ? "dark" : "light";
     window.localStorage.setItem(storageKey, JSON.stringify({ navigationCollapsed, skin, workspaceRailWidth }));
   }, [navigationCollapsed, ready, skin, workspaceRailWidth]);
+
+  useEffect(() => {
+    if (ready) window.localStorage.setItem(sessionFavoritesKey, JSON.stringify(favoriteSessions));
+  }, [favoriteSessions, ready]);
 
   function beginRailResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -327,17 +353,6 @@ export function AppShell() {
     } catch (error) { setActionError(error instanceof Error ? error.message : "Could not rename the Hermes session."); throw error; }
   }
 
-  async function archiveSession(sessionToArchive: HermesSession) {
-    if (!liveAdapter.current) return;
-    setActionError(null);
-    try {
-      await liveAdapter.current.archiveSession(sessionToArchive, true);
-      liveAdapter.current.close();
-      setWorkspace(current => ({ ...current, sessions: current.sessions.filter(item => item.id !== sessionToArchive.id) }));
-      setActiveSession("");
-    } catch (error) { setActionError(error instanceof Error ? error.message : "Could not archive the Hermes session."); throw error; }
-  }
-
   async function deleteSession(sessionToDelete: HermesSession) {
     if (!liveAdapter.current) return;
     setActionError(null);
@@ -396,6 +411,11 @@ export function AppShell() {
     setActiveSession(sessionId);
     setExpandedProfiles(current => current.includes(profileId) ? current : [...current, profileId]);
     setNavigationOpen(false);
+  }
+
+  function toggleSessionFavorite(profileId: string, sessionId: string) {
+    const key = `${profileId}:${sessionId}`;
+    setFavoriteSessions(current => current.includes(key) ? current.filter(value => value !== key) : [...current, key]);
   }
 
   function stopWork() {
@@ -489,13 +509,13 @@ export function AppShell() {
     {navigationOpen && <button className="navigation-backdrop" type="button" aria-label="Close sessions" onClick={() => setNavigationOpen(false)} />}
     <aside className={`navigation ${navigationOpen ? "open" : ""}`}>
       <div className="navigation-head"><img className="brand-logo" src="./myosotis-logo.png" alt="Hermes logo" /><div><strong className="brand-name">Hermes Web UI MSG</strong></div><button className="collapse" type="button" onClick={() => setNavigationCollapsed(value => !value)} aria-label={navigationCollapsed ? "Expand sidebar" : "Collapse sidebar"}>{navigationCollapsed ? "+" : "-"}</button><button className="drawer-close" type="button" onClick={() => setNavigationOpen(false)} aria-label="Close sessions">Close</button></div>
-      <Navigation workspace={workspace} adapter={settingsAdapter} activePanel={activePanel} activeProfile={activeProfile} activeSession={activeSession} expandedProfiles={expandedProfiles} live={live} canShowSettings={live || demoMode} creatingSession={creatingSession} onCreateSession={createSession} onOpenCron={() => { setActivePanel("cron"); setNavigationOpen(false); }} onOpenSettings={() => { setSettingsOpen(true); setNavigationOpen(false); }} onProfile={toggleProfile} onSession={selectSession} />
+      <Navigation workspace={workspace} adapter={settingsAdapter} activePanel={activePanel} activeProfile={activeProfile} activeSession={activeSession} expandedProfiles={expandedProfiles} favoriteSessions={favoriteSessions} live={live} canShowSettings={live || demoMode} creatingSession={creatingSession} onCreateSession={createSession} onOpenCron={() => { setActivePanel("cron"); setNavigationOpen(false); }} onOpenSettings={() => { setSettingsOpen(true); setNavigationOpen(false); }} onProfile={toggleProfile} onSession={selectSession} onToggleFavorite={toggleSessionFavorite} />
     </aside>
-    <main className="main-panel">{settingsOpen && <SettingsSheet adapter={settingsAdapter} skin={skin} onSkinChange={setSkin} onClose={() => setSettingsOpen(false)} onWorkspaceChanged={retryGateway} />}{activePanel === "cron" ? <EnhancedCronPanel adapter={settingsAdapter} profiles={workspace.profiles} activeProfile={activeProfile} onClose={() => setActivePanel("chat")} /> : <div className={`workspace-layout${workspaceRailOpen ? "" : " rail-closed"}`} style={{ "--workspace-rail-width": `${workspaceRailWidth}px` } as CSSProperties}><WorkspaceChatPanel workspace={workspace} profileId={activeProfile} session={session} adapter={settingsAdapter} loadError={loadError ?? actionError} signInHref={signInHref} openingSession={openingSession} sendingMessage={sendingMessage} approvalChoice={approvalChoice} filesOpen={workspaceRailOpen} onToggleFiles={() => setWorkspaceRailOpen(value => !value)} onRetryGateway={retryGateway} onBrowseSessions={() => setNavigationOpen(true)} onSendMessage={sendMessage} onSteerMessage={steerMessage} onUndoLastTurn={undoLastTurn} onStopWork={stopWork} onRespondToApproval={respondToApproval} onRenameSession={renameSession} onArchiveSession={archiveSession} onDeleteSession={deleteSession} onExportSession={exportSession} />{workspaceRailOpen && <><div className="workspace-rail-resizer" role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuemin={workspaceRailMinWidth} aria-valuemax={workspaceRailMaxWidth} aria-valuenow={workspaceRailWidth} tabIndex={0} onPointerDown={beginRailResize} onPointerMove={resizeRail} onPointerUp={finishRailResize} onPointerCancel={finishRailResize} onKeyDown={event => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setWorkspaceRailWidth(current => Math.max(workspaceRailMinWidth, Math.min(workspaceRailMaxWidth, current + (event.key === "ArrowLeft" ? 16 : -16)))); }} /><WorkspaceRail adapter={settingsAdapter} onClose={() => setWorkspaceRailOpen(false)} /></>}</div>}</main>
+    <main className="main-panel">{settingsOpen && <SettingsSheet adapter={settingsAdapter} skin={skin} onSkinChange={setSkin} onClose={() => setSettingsOpen(false)} onWorkspaceChanged={retryGateway} />}{activePanel === "cron" ? <EnhancedCronPanel adapter={settingsAdapter} profiles={workspace.profiles} activeProfile={activeProfile} onClose={() => setActivePanel("chat")} onOpenSession={selectSession} /> : <div className={`workspace-layout${workspaceRailOpen ? "" : " rail-closed"}`} style={{ "--workspace-rail-width": `${workspaceRailWidth}px` } as CSSProperties}><WorkspaceChatPanel workspace={workspace} profileId={activeProfile} session={session} adapter={settingsAdapter} loadError={loadError ?? actionError} signInHref={signInHref} openingSession={openingSession} sendingMessage={sendingMessage} approvalChoice={approvalChoice} filesOpen={workspaceRailOpen} onToggleFiles={() => setWorkspaceRailOpen(value => !value)} onRetryGateway={retryGateway} onBrowseSessions={() => setNavigationOpen(true)} onSendMessage={sendMessage} onSteerMessage={steerMessage} onUndoLastTurn={undoLastTurn} onStopWork={stopWork} onRespondToApproval={respondToApproval} onRenameSession={renameSession} onDeleteSession={deleteSession} onExportSession={exportSession} />{workspaceRailOpen && <><div className="workspace-rail-resizer" role="separator" aria-label="Resize files panel" aria-orientation="vertical" aria-valuemin={workspaceRailMinWidth} aria-valuemax={workspaceRailMaxWidth} aria-valuenow={workspaceRailWidth} tabIndex={0} onPointerDown={beginRailResize} onPointerMove={resizeRail} onPointerUp={finishRailResize} onPointerCancel={finishRailResize} onKeyDown={event => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setWorkspaceRailWidth(current => Math.max(workspaceRailMinWidth, Math.min(workspaceRailMaxWidth, current + (event.key === "ArrowLeft" ? 16 : -16)))); }} /><WorkspaceRail adapter={settingsAdapter} onClose={() => setWorkspaceRailOpen(false)} /></>}</div>}</main>
   </div>;
 }
 
-function Navigation({ workspace, adapter, activePanel, activeProfile, activeSession, expandedProfiles, live, canShowSettings, creatingSession, onCreateSession, onOpenCron, onOpenSettings, onProfile, onSession }: { workspace: HermesWorkspaceSnapshot; adapter: SameOriginHermesAdapter | null; activePanel: "chat" | "cron"; activeProfile: string; activeSession: string; expandedProfiles: string[]; live: boolean; canShowSettings: boolean; creatingSession: boolean; onCreateSession: () => void; onOpenCron: () => void; onOpenSettings: () => void; onProfile: (id: string) => void; onSession: (profileId: string, sessionId: string) => void }) {
+function Navigation({ workspace, adapter, activePanel, activeProfile, activeSession, expandedProfiles, favoriteSessions, live, canShowSettings, creatingSession, onCreateSession, onOpenCron, onOpenSettings, onProfile, onSession, onToggleFavorite }: { workspace: HermesWorkspaceSnapshot; adapter: SameOriginHermesAdapter | null; activePanel: "chat" | "cron"; activeProfile: string; activeSession: string; expandedProfiles: string[]; favoriteSessions: string[]; live: boolean; canShowSettings: boolean; creatingSession: boolean; onCreateSession: () => void; onOpenCron: () => void; onOpenSettings: () => void; onProfile: (id: string) => void; onSession: (profileId: string, sessionId: string) => void; onToggleFavorite: (profileId: string, sessionId: string) => void }) {
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<HermesSessionSearchResult[] | null>(null);
   const [profilesOpen, setProfilesOpen] = useState(false);
@@ -509,19 +529,19 @@ function Navigation({ workspace, adapter, activePanel, activeProfile, activeSess
   const sessionsFor = (profileId: string) => {
     const all = workspace.sessions.filter(item => item.profileId === profileId);
     const matches = searchHits ? searchHits.filter(item => item.profileId === profileId) : all.filter(item => item.title.toLowerCase().includes(query.trim().toLowerCase()));
-    return { all, visible: [...matches].sort((a, b) => Number(b.status === "working") - Number(a.status === "working")) };
+    return { all, visible: [...matches].sort((a, b) => Number(favoriteSessions.includes(`${b.profileId}:${b.id}`)) - Number(favoriteSessions.includes(`${a.profileId}:${a.id}`)) || Number(b.status === "working") - Number(a.status === "working")) };
   };
   const defaultSessions = defaultProfile ? sessionsFor(defaultProfile.id) : { all: [], visible: [] };
   const showProfiles = profilesOpen || Boolean(query.trim());
 
-  return <div className="tree"><div className="tree-primary"><div className="tree-actions">{live && <button className="sidebar-new-session" type="button" onClick={onCreateSession} disabled={creatingSession}>{creatingSession ? "Creating..." : "+ New session"}</button>}<label className="session-search"><span>Search sessions</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Find in chats" /></label></div>{defaultProfile && <section className="default-sessions"><div className="tree-label">Sessions <small>{query ? `${defaultSessions.visible.length}/${defaultSessions.all.length}` : defaultSessions.all.length}</small></div><SessionRows sessions={defaultSessions.visible} profileId={defaultProfile.id} activeSession={activeSession} emptyLabel={query ? "No matching sessions." : "No sessions yet."} onSession={onSession} /></section>}<section className="profiles-toggle"><button type="button" onClick={() => setProfilesOpen(value => !value)} aria-expanded={showProfiles}>Profiles <small>{auxiliaryProfiles.length}</small><span>{showProfiles ? "−" : "+"}</span></button>{showProfiles && auxiliaryProfiles.map(profile => { const sessions = sessionsFor(profile.id); const expanded = expandedProfiles.includes(profile.id); return <section className="profile-node" key={profile.id}><button type="button" className={`profile-row ${profile.id === activeProfile ? "selected" : ""}`} onClick={() => onProfile(profile.id)} aria-expanded={expanded}><span className={`status-dot ${profile.gateway === "stopped" ? "warning" : ""}`} /><span>{profile.label}</span><small>{profile.model}</small><span className="profile-chevron">{expanded ? "−" : "+"}</span></button>{expanded && <div className="session-list"><div className="tree-label inline">Sessions <small>{query ? `${sessions.visible.length}/${sessions.all.length}` : sessions.all.length}</small></div><SessionRows sessions={sessions.visible} profileId={profile.id} activeSession={activeSession} emptyLabel={query ? "No matching sessions." : "No sessions yet."} onSession={onSession} /></div>}</section>; })}</section></div><div className="sidebar-footer">{live && <button className={`sidebar-cron ${activePanel === "cron" ? "selected" : ""}`} type="button" onClick={onOpenCron}>Cron jobs</button>}{canShowSettings && <button className="sidebar-settings" type="button" onClick={onOpenSettings}>Settings</button>}</div></div>;
+  return <div className="tree"><div className="tree-primary"><div className="tree-actions">{live && <button className="sidebar-new-session" type="button" onClick={onCreateSession} disabled={creatingSession}>{creatingSession ? "Creating..." : "+ New session"}</button>}<label className="session-search"><span>Search sessions</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Find in chats" /></label></div>{defaultProfile && <section className="default-sessions"><div className="tree-label">Sessions <small>{query ? `${defaultSessions.visible.length}/${defaultSessions.all.length}` : defaultSessions.all.length}</small></div><SessionRows sessions={defaultSessions.visible} profileId={defaultProfile.id} activeSession={activeSession} favoriteSessions={favoriteSessions} emptyLabel={query ? "No matching sessions." : "No sessions yet."} onSession={onSession} onToggleFavorite={onToggleFavorite} /></section>}<section className="profiles-toggle"><button type="button" onClick={() => setProfilesOpen(value => !value)} aria-expanded={showProfiles}>Profiles <small>{auxiliaryProfiles.length}</small><span>{showProfiles ? "−" : "+"}</span></button>{showProfiles && auxiliaryProfiles.map(profile => { const sessions = sessionsFor(profile.id); const expanded = expandedProfiles.includes(profile.id); return <section className="profile-node" key={profile.id}><button type="button" className={`profile-row ${profile.id === activeProfile ? "selected" : ""}`} onClick={() => onProfile(profile.id)} aria-expanded={expanded}><span className={`status-dot ${profile.gateway === "stopped" ? "warning" : ""}`} /><span>{profile.label}</span><small>{profile.model}</small><span className="profile-chevron">{expanded ? "−" : "+"}</span></button>{expanded && <div className="session-list"><div className="tree-label inline">Sessions <small>{query ? `${sessions.visible.length}/${sessions.all.length}` : sessions.all.length}</small></div><SessionRows sessions={sessions.visible} profileId={profile.id} activeSession={activeSession} favoriteSessions={favoriteSessions} emptyLabel={query ? "No matching sessions." : "No sessions yet."} onSession={onSession} onToggleFavorite={onToggleFavorite} /></div>}</section>; })}</section></div><div className="sidebar-footer">{live && <button className={`sidebar-cron ${activePanel === "cron" ? "selected" : ""}`} type="button" onClick={onOpenCron}>Cron jobs</button>}{canShowSettings && <button className="sidebar-settings" type="button" onClick={onOpenSettings}>Settings</button>}</div></div>;
 }
 
-function SessionRows({ sessions, profileId, activeSession, emptyLabel, onSession }: { sessions: HermesSessionSearchResult[]; profileId: string; activeSession: string; emptyLabel: string; onSession: (profileId: string, sessionId: string) => void }) {
-  return <div className="session-scroll">{sessions.map(item => <div className={`session-item ${item.id === activeSession ? "selected" : ""}`} key={`${profileId}:${item.id}`}><button type="button" onClick={() => onSession(profileId, item.id)} className="session-row"><span className={item.status === "working" ? "pulse" : "session-mark"} /><span>{item.title}</span><small className={item.snippet ? "session-snippet" : undefined}>{item.snippet || item.preview || item.updatedAt}</small></button></div>)}{sessions.length === 0 && <p className="tree-empty">{emptyLabel}</p>}</div>;
+function SessionRows({ sessions, profileId, activeSession, favoriteSessions, emptyLabel, onSession, onToggleFavorite }: { sessions: HermesSessionSearchResult[]; profileId: string; activeSession: string; favoriteSessions: string[]; emptyLabel: string; onSession: (profileId: string, sessionId: string) => void; onToggleFavorite: (profileId: string, sessionId: string) => void }) {
+  return <div className="session-scroll">{sessions.map(item => { const favorite = favoriteSessions.includes(`${profileId}:${item.id}`); return <div className={`session-item ${item.id === activeSession ? "selected" : ""}`} key={`${profileId}:${item.id}`}><button type="button" onClick={() => onSession(profileId, item.id)} className="session-row"><span className={item.status === "working" ? "pulse" : "session-mark"} /><span>{item.title}</span><small className={item.snippet ? "session-snippet" : undefined}>{item.snippet || item.preview || item.updatedAt}</small></button><button className={`session-favorite ${favorite ? "selected" : ""}`} type="button" onClick={() => onToggleFavorite(profileId, item.id)} aria-label={favorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={favorite}>★</button></div>; })}{sessions.length === 0 && <p className="tree-empty">{emptyLabel}</p>}</div>;
 }
 
-function WorkspaceChatPanel({ workspace, profileId, session, adapter, loadError, signInHref, openingSession, sendingMessage, approvalChoice, filesOpen, onToggleFiles, onRetryGateway, onBrowseSessions, onSendMessage, onSteerMessage, onUndoLastTurn, onStopWork, onRespondToApproval, onRenameSession, onArchiveSession, onDeleteSession, onExportSession }: { workspace: HermesWorkspaceSnapshot; profileId: string; session: HermesSession | undefined; adapter: SameOriginHermesAdapter | null; loadError: string | null; signInHref?: string; openingSession: boolean; sendingMessage: boolean; approvalChoice: HermesApprovalRequest["choices"][number] | null; filesOpen: boolean; onToggleFiles: () => void; onRetryGateway: () => void; onBrowseSessions: () => void; onSendMessage: (text: string, options?: SendMessageOptions) => Promise<void>; onSteerMessage: (text: string) => Promise<void>; onUndoLastTurn: () => Promise<void>; onStopWork: () => void; onRespondToApproval: (choice: HermesApprovalRequest["choices"][number]) => void; onRenameSession: (session: HermesSession, title: string) => Promise<void>; onArchiveSession: (session: HermesSession) => Promise<void>; onDeleteSession: (session: HermesSession) => Promise<void>; onExportSession: (session: HermesSession) => Promise<void> }) {
+function WorkspaceChatPanel({ workspace, profileId, session, adapter, loadError, signInHref, openingSession, sendingMessage, approvalChoice, filesOpen, onToggleFiles, onRetryGateway, onBrowseSessions, onSendMessage, onSteerMessage, onUndoLastTurn, onStopWork, onRespondToApproval, onRenameSession, onDeleteSession, onExportSession }: { workspace: HermesWorkspaceSnapshot; profileId: string; session: HermesSession | undefined; adapter: SameOriginHermesAdapter | null; loadError: string | null; signInHref?: string; openingSession: boolean; sendingMessage: boolean; approvalChoice: HermesApprovalRequest["choices"][number] | null; filesOpen: boolean; onToggleFiles: () => void; onRetryGateway: () => void; onBrowseSessions: () => void; onSendMessage: (text: string, options?: SendMessageOptions) => Promise<void>; onSteerMessage: (text: string) => Promise<void>; onUndoLastTurn: () => Promise<void>; onStopWork: () => void; onRespondToApproval: (choice: HermesApprovalRequest["choices"][number]) => void; onRenameSession: (session: HermesSession, title: string) => Promise<void>; onDeleteSession: (session: HermesSession) => Promise<void>; onExportSession: (session: HermesSession) => Promise<void> }) {
   const live = workspace.gatewayState === "connected";
   const showNewSessionWelcome = Boolean(session && session.messages.length === 0 && !openingSession && !session.approval);
   const transcriptRef = useRef<HTMLElement | null>(null);
@@ -780,9 +800,9 @@ function WorkspaceChatPanel({ workspace, profileId, session, adapter, loadError,
   }
 
   return <div className="workspace-content hermes-content">
-    <section className="content-head"><div><h1>{session?.title ?? (live ? "New conversation" : "Hermes Workspace")}</h1></div><div className="head-actions">{session && session.persistence !== "draft" && <SessionActions session={session} onRename={onRenameSession} onArchive={onArchiveSession} onDelete={onDeleteSession} onExport={onExportSession} />}<button className="quiet-action files-panel-toggle" type="button" onClick={onToggleFiles} aria-pressed={filesOpen}>{filesOpen ? "Hide files" : "Files"}</button><button className="browse-sessions" type="button" onClick={onBrowseSessions}>Sessions</button></div></section>
+    <section className="content-head"><div><h1>{session?.title ?? (live ? "New conversation" : "Hermes Workspace")}</h1></div><div className="head-actions">{session && session.persistence !== "draft" && <SessionActions session={session} onRename={onRenameSession} onDelete={onDeleteSession} onExport={onExportSession} />}<button className="quiet-action files-panel-toggle" type="button" onClick={onToggleFiles} aria-pressed={filesOpen}>{filesOpen ? "Hide files" : "Files"}</button><button className="browse-sessions" type="button" onClick={onBrowseSessions}>Sessions</button></div></section>
     {loadError ? <section className="empty-state"><strong>Gateway connection unavailable</strong><p>{loadError}</p><div className="empty-actions"><button className="new-session" type="button" onClick={onRetryGateway}>Retry connection</button>{signInHref && <a className="quiet-action" href={signInHref}>Sign in to Hermes</a>}</div></section> : <section ref={transcriptRef} className="chat-transcript" aria-label="Conversation" onScroll={onTranscriptScroll}><div ref={transcriptContentRef} className={`chat-transcript-content${showNewSessionWelcome ? " empty-session" : ""}`}>
-      {showNewSessionWelcome && <section className="new-session-welcome"><img src="./hermes-session-hero.png" alt="" /></section>}
+      {showNewSessionWelcome && <section className="new-session-welcome"><img src="./hermes-session-hero-20260803.png" alt="" /></section>}
       {(session?.messages ?? []).map(message => <TranscriptMessage key={message.id} message={message} messageKey={message.id} showActions={turnFinalAssistantIds.has(message.id)} />)}
       {showResponseLoader && <div className="assistant-working" role="status"><span className="pulse" />Thinking<span className="stream-cursor" aria-hidden="true" /></div>}
       {session?.approval && <article className="approval-card"><span className="eyebrow">Hermes approval</span><strong>{session.approval.command}</strong><p>{session.approval.description}</p><small>This choice is recorded by Hermes for this requested action.</small><div className="approval-actions">{session.approval.choices.map(choice => <button className={`approval-choice ${choice}`} key={choice} type="button" onClick={() => onRespondToApproval(choice)} disabled={Boolean(approvalChoice)}><span>{approvalChoice === choice ? "Responding..." : choice}</span><small>{approvalCopy[choice]}</small></button>)}</div></article>}
@@ -806,7 +826,7 @@ function WorkspaceChatPanel({ workspace, profileId, session, adapter, loadError,
   </div>;
 }
 
-function SessionActions({ session, onRename, onArchive, onDelete, onExport }: { session: HermesSession; onRename: (session: HermesSession, title: string) => Promise<void>; onArchive: (session: HermesSession) => Promise<void>; onDelete: (session: HermesSession) => Promise<void>; onExport: (session: HermesSession) => Promise<void> }) {
+function SessionActions({ session, onRename, onDelete, onExport }: { session: HermesSession; onRename: (session: HermesSession, title: string) => Promise<void>; onDelete: (session: HermesSession) => Promise<void>; onExport: (session: HermesSession) => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(session.title);
@@ -821,7 +841,7 @@ function SessionActions({ session, onRename, onArchive, onDelete, onExport }: { 
   async function archive() {
     if (!window.confirm(`Archive “${session.title}”? You can restore it in native Hermes.`)) return;
     setSaving(true);
-    try { await onArchive(session); setOpen(false); }
+    try { setOpen(false); }
     finally { setSaving(false); }
   }
   async function remove() {
@@ -830,7 +850,10 @@ function SessionActions({ session, onRename, onArchive, onDelete, onExport }: { 
     try { await onDelete(session); setOpen(false); }
     finally { setSaving(false); }
   }
+  return <div className="session-actions"><button className="quiet-action session-actions-toggle" type="button" aria-label="Manage session" aria-expanded={open} onClick={() => setOpen(value => !value)}>•••</button>{open && <div className="session-actions-menu">{renaming ? <form onSubmit={event => { event.preventDefault(); void rename(); }}><input autoFocus value={title} onChange={event => setTitle(event.target.value)} aria-label="Session title" /><div><button className="quiet-action" type="submit" disabled={saving}>Save</button><button className="quiet-action" type="button" onClick={() => { setTitle(session.title); setRenaming(false); }} disabled={saving}>Cancel</button></div></form> : <><button type="button" onClick={() => setRenaming(true)}>Rename</button><button type="button" onClick={() => void onExport(session)} disabled={saving}>Export JSON</button><button className="danger-action" type="button" onClick={() => void remove()} disabled={saving}>Delete</button></>}</div>}</div>;
+  /*
   return <div className="session-actions"><button className="quiet-action session-actions-toggle" type="button" aria-label="Manage session" aria-expanded={open} onClick={() => setOpen(value => !value)}>•••</button>{open && <div className="session-actions-menu">{renaming ? <form onSubmit={event => { event.preventDefault(); void rename(); }}><input autoFocus value={title} onChange={event => setTitle(event.target.value)} aria-label="Session title" /><div><button className="quiet-action" type="submit" disabled={saving}>Save</button><button className="quiet-action" type="button" onClick={() => { setTitle(session.title); setRenaming(false); }} disabled={saving}>Cancel</button></div></form> : <><button type="button" onClick={() => setRenaming(true)}>Rename</button><button type="button" onClick={() => void onExport(session)} disabled={saving}>Export JSON</button><button type="button" onClick={() => void archive()} disabled={saving}>Archive</button><button className="danger-action" type="button" onClick={() => void remove()} disabled={saving}>Delete</button></>}</div>}</div>;
+*/
 }
 
 function ComposerModelPicker({ adapter, session, models, value, onSelect, disabled }: { adapter: SameOriginHermesAdapter | null; session: HermesSession | undefined; models: HermesModelOption[]; value: string; onSelect: (value: string) => Promise<void>; disabled: boolean }) {
@@ -1009,6 +1032,34 @@ function WorkspaceRail({ adapter, onClose }: { adapter: SameOriginHermesAdapter 
     }
   }
 
+  async function createTextFile() {
+    if (!adapter || !root) return;
+    if (dirty && !window.confirm("Discard unsaved changes and create a new file?")) return;
+    const relativePath = window.prompt("New text file path, relative to this workspace", "notes.md")?.trim();
+    if (!relativePath) return;
+    const segments = relativePath.replace(/\\/g, "/").split("/");
+    if (segments.some(segment => !segment || segment === "." || segment === "..")) {
+      setNotice("Use a file name inside the current workspace.");
+      return;
+    }
+    const path = `${root.replace(/[\\/]+$/, "")}/${segments.join("/")}`;
+    setSaving(true);
+    setNotice("");
+    try {
+      await adapter.writeTextFile(path, "");
+      await loadDirectory(root);
+      setSelectedPath(path);
+      setText("");
+      setFileState({ binary: false, truncated: false, language: "text" });
+      setDirty(false);
+      setNotice("New text file created in the Hermes workspace.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Hermes could not create this file.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function closeEditor() {
     if (dirty && !window.confirm("Discard unsaved changes?")) return;
     setSelectedPath("");
@@ -1020,7 +1071,7 @@ function WorkspaceRail({ adapter, onClose }: { adapter: SameOriginHermesAdapter 
 
   return <aside className="workspace-rail" aria-label="Workspace files">
     <header className="work-rail-head"><div><span className="eyebrow">Hermes workspace</span><strong>Files</strong></div><button className="work-rail-close" type="button" onClick={onClose} aria-label="Close files panel">×</button></header>
-    <div className="file-explorer-toolbar"><span title={root}>{root || "Opening workspace…"}</span><button type="button" onClick={() => root && void loadDirectory(root)} disabled={!root || loading.includes(root)} aria-label="Refresh folder">↻</button></div>
+    <div className="file-explorer-toolbar"><span title={root}>{root || "Opening workspace…"}</span><button type="button" onClick={() => void createTextFile()} disabled={!root || saving} aria-label="Create text file">+</button><button type="button" onClick={() => root && void loadDirectory(root)} disabled={!root || loading.includes(root)} aria-label="Refresh folder">↻</button></div>
     {notice && <p className="file-explorer-notice" role="status">{notice}</p>}
     {selectedPath ? <section className="file-editor" aria-label="Text editor">
       <header><span title={selectedPath}>{selectedPath || "Select a text file"}</span><div>{fileState?.language && <small>{fileState.language}</small>}{selectedPath && <button className="file-editor-close" type="button" onClick={closeEditor}>Close</button>}</div></header>
@@ -1091,13 +1142,14 @@ function cronPresentation(job: HermesCronJob) {
   return { tone: "scheduled", label: "Schedule active", description: job.nextRunAt ? "Hermes will run this job at the next scheduled time." : "Hermes has this schedule enabled; the next run time is not available yet." };
 }
 
-function EnhancedCronPanel({ adapter, profiles, activeProfile, onClose }: { adapter: SameOriginHermesAdapter | null; profiles: HermesProfile[]; activeProfile: string; onClose: () => void }) {
+function EnhancedCronPanel({ adapter, profiles, activeProfile, onClose, onOpenSession }: { adapter: SameOriginHermesAdapter | null; profiles: HermesProfile[]; activeProfile: string; onClose: () => void; onOpenSession: (profileId: string, sessionId: string) => void }) {
   const [jobs, setJobs] = useState<HermesCronJob[]>([]);
   const [runs, setRuns] = useState<Record<string, HermesCronRun[]>>({});
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
   const [expandedRuns, setExpandedRuns] = useState<string | null>(null);
   const [loadingRuns, setLoadingRuns] = useState<string | null>(null);
-  const [draft, setDraft] = useState<HermesCronJobDraft>({ name: "", prompt: "", schedule: "" });
+  const [draft, setDraft] = useState<HermesCronJobDraft>({ name: "", prompt: "", schedule: "", deliver: "local" });
+  const [deliveryTargets, setDeliveryTargets] = useState<HermesCronDeliveryTarget[]>([]);
   const [targetProfile, setTargetProfile] = useState(activeProfile);
   const [showCreate, setShowCreate] = useState(false);
   const [editingJob, setEditingJob] = useState<HermesCronJob | null>(null);
@@ -1111,7 +1163,7 @@ function EnhancedCronPanel({ adapter, profiles, activeProfile, onClose }: { adap
   async function refresh() {
     if (!adapter) return;
     setLoading(true); setError(null);
-    try { setJobs(await adapter.listCronJobs()); }
+    try { const [loadedJobs, targets] = await Promise.all([adapter.listCronJobs(), adapter.listCronDeliveryTargets()]); setJobs(loadedJobs); setDeliveryTargets(targets); }
     catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not load Hermes cron jobs."); }
     finally { setLoading(false); }
   }
@@ -1122,7 +1174,7 @@ function EnhancedCronPanel({ adapter, profiles, activeProfile, onClose }: { adap
     if (!adapter || saving || !draft.prompt.trim() || !draft.schedule.trim()) return;
     setSaving(true); setError(null);
     try {
-      const savedDraft = { name: draft.name.trim(), prompt: draft.prompt.trim(), schedule: draft.schedule.trim() };
+      const savedDraft = { name: draft.name.trim(), prompt: draft.prompt.trim(), schedule: draft.schedule.trim(), deliver: draft.deliver };
       if (editingJob) {
         const updated = await adapter.updateCronJob(editingJob, savedDraft);
         setJobs(current => current.map(item => cronKey(item) === cronKey(editingJob) ? updated : item));
@@ -1130,13 +1182,13 @@ function EnhancedCronPanel({ adapter, profiles, activeProfile, onClose }: { adap
         const created = await adapter.createCronJob(savedDraft, targetProfile);
         setJobs(current => [created, ...current]);
       }
-      setDraft({ name: "", prompt: "", schedule: "" }); setEditingJob(null); setShowCreate(false);
+      setDraft({ name: "", prompt: "", schedule: "", deliver: "local" }); setEditingJob(null); setShowCreate(false);
     } catch (createError) { setError(createError instanceof Error ? createError.message : "Could not create the Hermes cron job."); }
     finally { setSaving(false); }
   }
-  function beginCreate() { setEditingJob(null); setDraft({ name: "", prompt: "", schedule: "" }); setShowCreate(value => !value); }
-  function beginEdit(job: HermesCronJob) { setEditingJob(job); setTargetProfile(job.profile ?? activeProfile); setDraft({ name: job.name, prompt: job.prompt, schedule: job.schedule }); setShowCreate(true); }
-  function duplicate(job: HermesCronJob) { setEditingJob(null); setTargetProfile(job.profile ?? activeProfile); setDraft({ name: `${job.name} copy`, prompt: job.prompt, schedule: job.schedule }); setShowCreate(true); }
+  function beginCreate() { setEditingJob(null); setDraft({ name: "", prompt: "", schedule: "", deliver: "local" }); setShowCreate(value => !value); }
+  function beginEdit(job: HermesCronJob) { setEditingJob(job); setTargetProfile(job.profile ?? activeProfile); setDraft({ name: job.name, prompt: job.prompt, schedule: job.schedule, deliver: job.deliver }); setShowCreate(true); }
+  function duplicate(job: HermesCronJob) { setEditingJob(null); setTargetProfile(job.profile ?? activeProfile); setDraft({ name: `${job.name} copy`, prompt: job.prompt, schedule: job.schedule, deliver: job.deliver }); setShowCreate(true); }
   async function remove(job: HermesCronJob) {
     if (!adapter || actionId || !window.confirm(`Delete cron job “${job.name}”? This cannot be undone.`)) return;
     const key = cronKey(job); setActionId(key); setError(null);
@@ -1169,12 +1221,12 @@ function EnhancedCronPanel({ adapter, profiles, activeProfile, onClose }: { adap
 
   return <div className="workspace-content cron-content">
     <section className="content-head"><div><span className="eyebrow">Hermes / Automations</span><h1>Cron jobs</h1><p>State and run history come directly from Hermes. “Schedule active” means future runs are enabled; it does not mean a job is running right now.</p></div><div className="head-actions"><button className="quiet-action" type="button" onClick={onClose}>Close</button><button className="quiet-action" type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button><button className="new-session" type="button" onClick={beginCreate}>{showCreate && !editingJob ? "Close" : "New cron job"}</button></div></section>
-    {showCreate && <section className="cron-create"><div><span className="eyebrow">{editingJob ? "Edit in Hermes" : "Create in Hermes"}</span><strong>{editingJob ? editingJob.name : "New scheduled job"}</strong></div><label>Profile<select value={targetProfile} onChange={event => setTargetProfile(event.target.value)} disabled={Boolean(editingJob)}>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label><label>Name <input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="Daily summary" /></label><label>Prompt <textarea value={draft.prompt} onChange={event => setDraft(current => ({ ...current, prompt: event.target.value }))} placeholder="What Hermes should do when this job runs" /></label><label>Schedule <input value={draft.schedule} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value }))} placeholder="0 9 * * *" /><small>Hermes validates the expression. Browser time zone: {timezone}.</small></label><div className="cron-presets" aria-label="Schedule presets">{presets.map(preset => <button className="quiet-action" type="button" key={preset.value} onClick={() => setDraft(current => ({ ...current, schedule: preset.value }))}>{preset.label}</button>)}</div><div className="cron-create-actions"><button className="new-session" type="button" onClick={() => void createJob()} disabled={saving || !draft.prompt.trim() || !draft.schedule.trim()}>{saving ? "Saving..." : editingJob ? "Save changes" : "Create cron job"}</button><button className="quiet-action" type="button" onClick={() => { setShowCreate(false); setEditingJob(null); }} disabled={saving}>Cancel</button></div></section>}
+    {showCreate && <section className="cron-create"><div><span className="eyebrow">{editingJob ? "Edit in Hermes" : "Create in Hermes"}</span><strong>{editingJob ? editingJob.name : "New scheduled job"}</strong></div><label>Profile<select value={targetProfile} onChange={event => setTargetProfile(event.target.value)} disabled={Boolean(editingJob)}>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label><label>Name <input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="Daily summary" /></label><label>Prompt <textarea value={draft.prompt} onChange={event => setDraft(current => ({ ...current, prompt: event.target.value }))} placeholder="What Hermes should do when this job runs" /></label><label>Schedule <input value={draft.schedule} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value }))} placeholder="0 9 * * *" /><small>Hermes validates the expression. Browser time zone: {timezone}.</small></label><label>Delivery<select value={draft.deliver} onChange={event => setDraft(current => ({ ...current, deliver: event.target.value }))}>{deliveryTargets.map(target => <option key={target.id} value={target.id} disabled={!target.homeTargetSet}>{target.name}{target.homeTargetSet ? "" : ` (${target.homeEnvVar ?? "home target"} not configured)`}</option>)}</select></label><div className="cron-presets" aria-label="Schedule presets">{presets.map(preset => <button className="quiet-action" type="button" key={preset.value} onClick={() => setDraft(current => ({ ...current, schedule: preset.value }))}>{preset.label}</button>)}</div><div className="cron-create-actions"><button className="new-session" type="button" onClick={() => void createJob()} disabled={saving || !draft.prompt.trim() || !draft.schedule.trim()}>{saving ? "Saving..." : editingJob ? "Save changes" : "Create cron job"}</button><button className="quiet-action" type="button" onClick={() => { setShowCreate(false); setEditingJob(null); }} disabled={saving}>Cancel</button></div></section>}
     {error && <section className="cron-error">{error}</section>}
     <section className="cron-list" aria-label="Hermes cron jobs">{loading ? <div className="empty-state"><strong>Loading cron jobs</strong><p>Hermes is reading the current schedule.</p></div> : jobs.length === 0 ? <div className="empty-state"><strong>No scheduled jobs</strong><p>There are no Hermes cron jobs for the loaded profiles.</p></div> : jobs.map(job => {
       const key = cronKey(job); const status = cronPresentation(job); const jobRuns = runs[key] ?? [];
       const expanded = expandedJob === key;
-      return <article className={`cron-job cron-${status.tone}`} key={key}><button className="cron-job-summary" type="button" onClick={() => setExpandedJob(current => current === key ? null : key)} aria-expanded={expanded}><div className="cron-job-head"><div><span className="eyebrow">{job.profile ?? "default"} / {job.deliver}</span><strong>{job.name}</strong></div><span className={`cron-state ${status.tone}`}>{status.label}</span></div><p className="cron-status-copy">{status.description}</p><span className="cron-job-expand">{expanded ? "Hide details" : "Show details"}</span></button>{expanded && <div className="cron-job-details"><p>{job.prompt || "No prompt recorded."}</p><dl><div><dt>Schedule</dt><dd>{job.schedule}</dd></div><div><dt>Next run</dt><dd>{status.tone === "paused" || status.tone === "completed" ? "Not scheduled" : formatCronDate(job.nextRunAt)}</dd></div><div><dt>Last result</dt><dd>{job.lastStatus ?? (job.lastRunAt ? "Completed" : "Not run yet")}</dd></div><div><dt>Last run</dt><dd>{formatCronDate(job.lastRunAt)}</dd></div></dl>{job.lastError && <p className="cron-job-error">Run error: {job.lastError}</p>}{job.lastDeliveryError && <p className="cron-job-error">Delivery error: {job.lastDeliveryError}</p>}<div className="cron-actions"><button className="quiet-action" type="button" onClick={() => void act(job, "trigger")} disabled={Boolean(actionId)}>{actionId === key ? "Updating..." : "Run now"}</button><button className="quiet-action" type="button" onClick={() => void act(job, status.tone === "paused" ? "resume" : "pause")} disabled={Boolean(actionId)}>{actionId === key ? "Updating..." : status.tone === "paused" ? "Resume schedule" : "Pause schedule"}</button><button className="quiet-action" type="button" onClick={() => beginEdit(job)} disabled={Boolean(actionId)}>Edit</button><button className="quiet-action" type="button" onClick={() => duplicate(job)} disabled={Boolean(actionId)}>Duplicate</button><button className="quiet-action danger-action" type="button" onClick={() => void remove(job)} disabled={Boolean(actionId)}>Delete</button><button className="quiet-action" type="button" onClick={() => void openRuns(job)} disabled={loadingRuns === key}>{expandedRuns === key ? "Hide run history" : loadingRuns === key ? "Loading history..." : "Run history"}</button></div>{expandedRuns === key && <section className="cron-runs" aria-label={`${job.name} run history`}>{loadingRuns === key ? <p>Reading Hermes run sessions...</p> : jobRuns.length === 0 ? <p>No stored run sessions yet.</p> : jobRuns.map(run => <article className={`cron-run ${run.active ? "active" : run.failed ? "failed" : ""}`} key={run.id}><div><strong>{run.active ? "Running now" : run.failed ? "Failed" : "Finished"}</strong><small>{formatCronDate(run.startedAt ?? run.updatedAt)}</small></div><p>{run.preview || run.title}</p></article>)}</section>}</div>}</article>;
+      return <article className={`cron-job cron-${status.tone}`} key={key}><button className="cron-job-summary" type="button" onClick={() => setExpandedJob(current => current === key ? null : key)} aria-expanded={expanded}><div className="cron-job-head"><div><span className="eyebrow">{job.profile ?? "default"} / {job.deliver}</span><strong>{job.name}</strong></div><span className={`cron-state ${status.tone}`}>{status.label}</span></div><p className="cron-status-copy">{status.description}</p><span className="cron-job-expand">{expanded ? "Hide details" : "Show details"}</span></button>{expanded && <div className="cron-job-details"><p>{job.prompt || "No prompt recorded."}</p><dl><div><dt>Schedule</dt><dd>{job.schedule}</dd></div><div><dt>Next run</dt><dd>{status.tone === "paused" || status.tone === "completed" ? "Not scheduled" : formatCronDate(job.nextRunAt)}</dd></div><div><dt>Last result</dt><dd>{job.lastStatus ?? (job.lastRunAt ? "Completed" : "Not run yet")}</dd></div><div><dt>Last run</dt><dd>{formatCronDate(job.lastRunAt)}</dd></div></dl>{job.lastError && <p className="cron-job-error">Run error: {job.lastError}</p>}{job.lastDeliveryError && <p className="cron-job-error">Delivery error: {job.lastDeliveryError}</p>}<div className="cron-actions"><button className="quiet-action" type="button" onClick={() => void act(job, "trigger")} disabled={Boolean(actionId)}>{actionId === key ? "Updating..." : "Run now"}</button><button className="quiet-action" type="button" onClick={() => void act(job, status.tone === "paused" ? "resume" : "pause")} disabled={Boolean(actionId)}>{actionId === key ? "Updating..." : status.tone === "paused" ? "Resume schedule" : "Pause schedule"}</button><button className="quiet-action" type="button" onClick={() => beginEdit(job)} disabled={Boolean(actionId)}>Edit</button><button className="quiet-action" type="button" onClick={() => duplicate(job)} disabled={Boolean(actionId)}>Duplicate</button><button className="quiet-action danger-action" type="button" onClick={() => void remove(job)} disabled={Boolean(actionId)}>Delete</button><button className="quiet-action" type="button" onClick={() => void openRuns(job)} disabled={loadingRuns === key}>{expandedRuns === key ? "Hide run history" : loadingRuns === key ? "Loading history..." : "Run history"}</button></div>{expandedRuns === key && <section className="cron-runs" aria-label={`${job.name} run history`}>{loadingRuns === key ? <p>Reading Hermes run sessions...</p> : jobRuns.length === 0 ? <p>No stored run sessions yet.</p> : jobRuns.map(run => <article className={`cron-run ${run.active ? "active" : run.failed ? "failed" : ""}`} key={run.id}><div><strong>{run.active ? "Running now" : run.failed ? "Failed" : "Finished"}</strong><small>{formatCronDate(run.startedAt ?? run.updatedAt)}</small></div><p>{run.preview || run.title}</p><button className="quiet-action" type="button" onClick={() => onOpenSession(job.profile ?? activeProfile, run.id)}>Open run session</button></article>)}</section>}</div>}</article>;
     })}</section>
   </div>;
 }
@@ -1272,9 +1324,9 @@ function HermesControls({ adapter, onClose }: { adapter: SameOriginHermesAdapter
   return <section className="hermes-controls" aria-label="Hermes settings"><div className="controls-head"><div><span className="eyebrow">Hermes settings</span><strong>{showModelSettings ? "Visible models" : "Model and Reasoning"}</strong></div><div className="controls-head-actions">{!showModelSettings && <button className="controls-close" type="button" onClick={() => setShowModelSettings(true)}>Visible models</button>}<button className="controls-close" type="button" onClick={onClose}>Close</button></div></div>{error && <p className="controls-error">{error}</p>}{!settings && !error && <p className="controls-loading">Loading Hermes settings...</p>}{settings && showModelSettings && <div className="model-settings"><p>Choose only the models you want to see in Settings. This is a browser UI preference; Hermes still owns the active model.</p><label className="model-filter"><span>Search all Hermes models</span><input value={modelQuery} onChange={event => setModelQuery(event.target.value)} placeholder="Provider or model name" /></label><div className="model-catalog">{filteredOptions.map(option => { const id = modelId(option); return <label className="model-option" key={id}><input type="checkbox" checked={shortlist.includes(id)} onChange={() => toggleShortlist(option)} /><span><strong>{option.model}</strong><small>{option.providerLabel}{option.warning ? ` · ${option.warning}` : ""}</small></span></label>; })}</div><p className="controls-note">{shortlist.length} model{shortlist.length === 1 ? "" : "s"} shown in Settings.</p><button className="quiet-action" type="button" onClick={() => setShowModelSettings(false)}>Done</button></div>}{settings && !showModelSettings && <div className="controls-grid"><label>Model<select value={selectedModel} onChange={event => { const selected = options.find(option => modelId(option) === event.target.value); if (selected) void changeModel(selected); }} disabled={saving || visibleOptions.length === 0}><option value={selectedModel}>{settings.model}</option>{visibleOptions.map(option => <option key={modelId(option)} value={modelId(option)}>{option.providerLabel} / {option.model}</option>)}</select><button className="model-settings-link" type="button" onClick={() => setShowModelSettings(true)}>Edit visible models</button></label>{settings.supportsReasoning && <label>Reasoning<select value={settings.reasoningEffort} onChange={event => void changeReasoning(event.target.value as HermesReasoningEffort)} disabled={saving}>{(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as HermesReasoningEffort[]).map(effort => <option key={effort} value={effort}>{effort}</option>)}</select></label>}</div>}{pendingModel && <div className="controls-confirm"><p>{notice}</p><button type="button" className="new-session" onClick={() => void changeModel(pendingModel, true)} disabled={saving}>{saving ? "Saving..." : "Confirm model"}</button><button type="button" className="quiet-action" onClick={() => { setPendingModel(null); setNotice(null); }} disabled={saving}>Cancel</button></div>}{notice && !pendingModel && <p className="controls-notice">{notice}</p>}{!showModelSettings && <p className="controls-note">Settings save model choices in Hermes. The visible-model list is stored only in this browser.</p>}</section>;
 }
 
-type SettingsSection = "appearance" | "model" | "skills" | "mcp" | "plugins";
+type SettingsSection = "appearance" | "model" | "skills" | "skillHub" | "mcp" | "mcpCatalog" | "plugins";
 
-function CapabilitySettings({ adapter, section }: { adapter: SameOriginHermesAdapter | null; section: Exclude<SettingsSection, "model" | "appearance"> }) {
+function CapabilitySettings({ adapter, section }: { adapter: SameOriginHermesAdapter | null; section: Exclude<SettingsSection, "model" | "appearance" | "skillHub" | "mcpCatalog"> }) {
   const [skills, setSkills] = useState<HermesSkill[]>([]);
   const [mcpServers, setMcpServers] = useState<HermesMcpServer[]>([]);
   const [plugins, setPlugins] = useState<HermesPlugin[]>([]);
@@ -1419,6 +1471,122 @@ function CapabilitySettings({ adapter, section }: { adapter: SameOriginHermesAda
   return <section className="capability-settings" aria-label={heading}><div className="controls-head"><div><span className="eyebrow">Hermes</span><strong>{heading}</strong></div><div className="controls-head-actions">{section === "skills" && <button className="controls-close" type="button" onClick={() => void runSkillHubAction("update")} disabled={Boolean(updating)}>{updating === "hub:update" ? "Starting..." : "Update all"}</button>}{section === "mcp" && <button className="controls-close" type="button" onClick={() => setShowMcpCreate(value => !value)}>{showMcpCreate ? "Cancel" : "Add server"}</button>}<button className="controls-close" type="button" onClick={() => void load()} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button></div></div><p className="capability-description">{description}</p>{section === "skills" && <div className="capability-add"><input value={skillIdentifier} onChange={event => setSkillIdentifier(event.target.value)} placeholder="Skill identifier, GitHub repo, or URL" /><button className="quiet-action" type="button" onClick={() => void runSkillHubAction("install", skillIdentifier)} disabled={Boolean(updating) || !skillIdentifier.trim()}>{updating === "hub:install" ? "Starting..." : "Install"}</button></div>}{section === "mcp" && showMcpCreate && <div className="capability-form"><label>Name<input value={mcpDraft.name} onChange={event => setMcpDraft(current => ({ ...current, name: event.target.value }))} placeholder="my-mcp" /></label><label>Transport<select value={mcpMode} onChange={event => setMcpMode(event.target.value as "http" | "stdio")}><option value="http">HTTP / SSE</option><option value="stdio">Command</option></select></label>{mcpMode === "http" ? <label>Server URL<input value={mcpDraft.url} onChange={event => setMcpDraft(current => ({ ...current, url: event.target.value }))} placeholder="https://example.com/mcp" /></label> : <><label>Command<input value={mcpDraft.command} onChange={event => setMcpDraft(current => ({ ...current, command: event.target.value }))} placeholder="npx" /></label><label>Arguments <small>One per line</small><textarea value={mcpArgs} onChange={event => setMcpArgs(event.target.value)} placeholder="-y\npackage-name" /></label></>}<label>Environment <small>Optional, KEY=VALUE per line</small><textarea value={mcpEnv} onChange={event => setMcpEnv(event.target.value)} spellCheck={false} /></label><div className="skill-editor-actions"><button className="new-session" type="button" onClick={() => void createMcpServer()} disabled={Boolean(updating) || !mcpDraft.name.trim() || (mcpMode === "http" ? !mcpDraft.url?.trim() : !mcpDraft.command?.trim())}>{updating === "mcp:create" ? "Saving..." : "Add MCP server"}</button><button className="quiet-action" type="button" onClick={() => setShowMcpCreate(false)} disabled={Boolean(updating)}>Cancel</button></div></div>}{error && <p className="controls-error">{error}</p>}{notice && <p className="controls-notice">{notice}</p>}{loading ? <p className="controls-loading">Loading from Hermes...</p> : empty ? <p className="controls-note">No {heading.toLowerCase()} configured in Hermes.</p> : <div className="capability-list">{section === "skills" && skills.map(skill => <article className="capability-row" key={skill.name}><div><strong>{skill.name}</strong>{skill.description && <small>{skill.description}</small>}</div><div className="capability-row-actions">{skill.category && <span>{skill.category}</span>}{skill.editable && <button className="plugin-toggle" type="button" onClick={() => void openSkillEditor(skill)}>Edit</button>}<button className="plugin-toggle" type="button" onClick={() => void toggleSkill(skill)} disabled={Boolean(updating)} aria-pressed={skill.enabled}>{updating === `skill:${skill.name}` ? "Saving..." : skill.enabled ? "Enabled" : "Disabled"}</button>{!skill.editable && <button className="plugin-toggle danger-action" type="button" onClick={() => void runSkillHubAction("uninstall", skill.name)} disabled={Boolean(updating)}>Remove</button>}</div></article>)}{section === "mcp" && mcpServers.map(server => <article className="capability-row capability-row-stacked" key={server.name}><div><strong>{server.name}</strong>{server.target && <small>{server.transport ? `${server.transport} / ` : ""}{server.target}{server.args?.length ? ` ${server.args.join(" ")}` : ""}</small>}{mcpTests[server.name] && <small className={mcpTests[server.name].ok ? "capability-test-ok" : "capability-test-error"}>{mcpTests[server.name].detail}</small>}</div><div className="capability-row-actions"><button className="plugin-toggle" type="button" onClick={() => void toggleMcpServer(server)} disabled={Boolean(updating)} aria-pressed={server.enabled}>{updating === `mcp:${server.name}` ? "Saving..." : server.enabled ? "Enabled" : "Disabled"}</button><button className="plugin-toggle" type="button" onClick={() => void testMcpServer(server)} disabled={Boolean(updating)}>{updating === `mcp-test:${server.name}` ? "Testing..." : "Test"}</button><button className="plugin-toggle danger-action" type="button" onClick={() => void removeMcpServer(server)} disabled={Boolean(updating)}>Remove</button></div></article>)}{section === "plugins" && plugins.map(plugin => <article className="capability-row" key={plugin.name}><div><strong>{plugin.name}{plugin.version ? ` ${plugin.version}` : ""}</strong>{plugin.description && <small>{plugin.description}</small>}{plugin.source && <small>{plugin.source}</small>}</div><button className="plugin-toggle" type="button" onClick={() => void togglePlugin(plugin)} disabled={Boolean(updating)} aria-pressed={plugin.enabled}>{updating === plugin.name ? "Saving..." : plugin.enabled ? "Enabled" : "Disabled"}</button></article>)}</div>}</section>;
 }
 
+function SkillHubBrowser({ adapter }: { adapter: SameOriginHermesAdapter | null }) {
+  const [sources, setSources] = useState<HermesSkillHubSource[]>([]);
+  const [entries, setEntries] = useState<HermesSkillHubEntry[]>([]);
+  const [query, setQuery] = useState("");
+  const [source, setSource] = useState("all");
+  const [tag, setTag] = useState("");
+  const [provider, setProvider] = useState("");
+  const [browseTotal, setBrowseTotal] = useState(0);
+  const [tags, setTags] = useState<Array<{ name: string; count: number }>>([]);
+  const [providers, setProviders] = useState<Array<{ name: string; count: number }>>([]);
+  const [selectedIdentifier, setSelectedIdentifier] = useState("");
+  const [preview, setPreview] = useState<HermesSkillHubPreview | null>(null);
+  const [scan, setScan] = useState<HermesSkillHubScan | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function browse(nextTag = tag, nextProvider = provider, offset = 0, append = false) {
+    if (!adapter) return;
+    setBusy("browse"); setError(null); setPreview(null); setScan(null);
+    try {
+      const hub: HermesSkillHubBrowse = await adapter.browseSkillHub({ tag: nextTag, provider: nextProvider, offset });
+      setEntries(current => append ? [...current, ...hub.entries.filter(entry => !current.some(item => item.identifier === entry.identifier))] : hub.entries);
+      setBrowseTotal(hub.total); setTags(hub.tags); setProviders(hub.providers);
+    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not browse the Hermes Skill Hub."); }
+    finally { setBusy(null); }
+  }
+
+  useEffect(() => { if (!adapter) return; void (async () => { try { setError(null); const [hub] = await Promise.all([adapter.listSkillHubSources(), browse("", "")]); setSources(hub.sources); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not load the Hermes Skill Hub."); } })(); }, [adapter]);
+
+  async function search() {
+    if (!adapter || !query.trim()) return;
+    setBusy("search"); setError(null); setPreview(null); setScan(null);
+    try { setEntries(await adapter.searchSkillHub(query.trim(), source)); setBrowseTotal(0); }
+    catch (searchError) { setError(searchError instanceof Error ? searchError.message : "Could not search the Skill Hub."); }
+    finally { setBusy(null); }
+  }
+
+  async function inspect(entry: HermesSkillHubEntry, mode: "preview" | "scan") {
+    if (!adapter) return;
+    setBusy(`${mode}:${entry.identifier}`); setError(null); setNotice(null);
+    try { if (mode === "preview") { setPreview(await adapter.previewSkillHub(entry.identifier)); setScan(null); } else { setScan(await adapter.scanSkillHub(entry.identifier)); setPreview(null); } }
+    catch (inspectError) { setError(inspectError instanceof Error ? inspectError.message : `Could not ${mode} this skill.`); }
+    finally { setBusy(null); }
+  }
+
+  async function install(entry: HermesSkillHubEntry) {
+    if (!adapter || !window.confirm(`Install skill “${entry.name}” from ${entry.source}?`)) return;
+    setBusy(`install:${entry.identifier}`); setError(null);
+    try { await adapter.startSkillHubAction("install", entry.identifier); setNotice(`Hermes started installing ${entry.name}. Refresh Skills after the background action finishes.`); setEntries(current => current.map(item => item.identifier === entry.identifier ? { ...item, installed: true } : item)); }
+    catch (installError) { setError(installError instanceof Error ? installError.message : "Could not start the skill install."); }
+    finally { setBusy(null); }
+  }
+
+  const selectedEntry = entries.find(entry => entry.identifier === selectedIdentifier) ?? entries[0] ?? null;
+  return <section className="capability-settings catalog-settings" aria-label="Skill Hub">
+    <div className="controls-head"><div><span className="eyebrow">Hermes catalog</span><strong>Skill Hub</strong></div></div>
+    <p className="capability-description">Browse the full Hermes Skills Index by topic or publisher. Search is optional when you already know a skill, repository, or topic.</p>
+    <div className="catalog-search"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void search(); } }} placeholder="Search a skill, repository, or topic" /><select value={source} onChange={event => setSource(event.target.value)} aria-label="Skill source"><option value="all">All sources</option>{sources.filter(item => item.searchable !== false).map(item => <option key={item.id} value={item.id} disabled={item.available === false || item.rateLimited}>{item.label}{item.rateLimited ? " (rate limited)" : ""}</option>)}</select><button className="new-session" type="button" onClick={() => void search()} disabled={busy === "search" || !query.trim()}>{busy === "search" ? "Searching..." : "Search"}</button></div>
+    <div className="catalog-filters"><label>Topic<select value={tag} onChange={event => { const value = event.target.value; setTag(value); setQuery(""); void browse(value, provider); }}><option value="">All topics</option>{tags.map(item => <option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}</select></label><label>Publisher<select value={provider} onChange={event => { const value = event.target.value; setProvider(value); setQuery(""); void browse(tag, value); }}><option value="">All publishers</option>{providers.map(item => <option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}</select></label><button className="quiet-action" type="button" onClick={() => { setTag(""); setProvider(""); setQuery(""); void browse("", ""); }} disabled={busy === "browse" || (!tag && !provider && !query)}>Clear</button><span>{query.trim() ? `${entries.length} search results` : busy === "browse" ? "Loading catalog..." : `${browseTotal.toLocaleString()} skills`}</span></div>
+    {error && <p className="controls-error">{error}</p>}{notice && <p className="controls-notice">{notice}</p>}
+    <div className="catalog-split">
+      <nav className="catalog-menu" aria-label="Skill catalog"><p className="catalog-menu-title">{query.trim() ? "Search results" : "Browse skills"}</p>{entries.length === 0 ? <p className="controls-note">No skills match this selection.</p> : entries.map(entry => <button type="button" className={selectedEntry?.identifier === entry.identifier ? "selected" : ""} key={entry.identifier} onClick={() => { setSelectedIdentifier(entry.identifier); setPreview(null); setScan(null); }}><strong>{entry.name}</strong><small>{entry.source} · {entry.trustLevel}</small>{entry.installed && <em>Installed</em>}</button>)}{!query.trim() && entries.length < browseTotal && <button className="catalog-load-more" type="button" onClick={() => void browse(tag, provider, entries.length, true)} disabled={busy === "browse"}>{busy === "browse" ? "Loading..." : `Load 50 more (${browseTotal - entries.length} remaining)`}</button>}</nav>
+      <article className="catalog-detail">{selectedEntry ? <><header><div><span className="eyebrow">{selectedEntry.source} / {selectedEntry.trustLevel}</span><strong>{selectedEntry.name}</strong></div>{selectedEntry.installed && <span className="capability-state enabled">Installed</span>}</header><p>{selectedEntry.description || "No description supplied by this source."}</p>{selectedEntry.repo && <p className="catalog-meta">Repository: {selectedEntry.repo}</p>}{selectedEntry.tags.length > 0 && <p className="catalog-meta">Tags: {selectedEntry.tags.join(", ")}</p>}<div className="catalog-actions"><button className="plugin-toggle" type="button" onClick={() => void inspect(selectedEntry, "preview")} disabled={Boolean(busy)}>{busy === `preview:${selectedEntry.identifier}` ? "Loading..." : "Read SKILL.md"}</button><button className="plugin-toggle" type="button" onClick={() => void inspect(selectedEntry, "scan")} disabled={Boolean(busy)}>{busy === `scan:${selectedEntry.identifier}` ? "Scanning..." : "Security scan"}</button><button className="new-session" type="button" onClick={() => void install(selectedEntry)} disabled={Boolean(busy) || selectedEntry.installed}>{selectedEntry.installed ? "Installed" : busy === `install:${selectedEntry.identifier}` ? "Starting..." : "Install"}</button></div>{preview && <section className="catalog-inspection"><strong>SKILL.md</strong><small>{preview.files.join(", ") || "No file list returned"}</small><pre>{preview.skillMd || "No SKILL.md text returned."}</pre></section>}{scan && <section className="catalog-inspection"><strong>Security scan: {scan.verdict}</strong><small>Install policy: {scan.policy}</small><p>{scan.summary}</p>{scan.policyReason && <p>{scan.policyReason}</p>}{scan.findings.length > 0 && <ul>{scan.findings.map((finding, index) => <li key={`${finding.file}:${finding.line ?? index}`}><strong>{finding.severity}</strong> {finding.category}: {finding.description}</li>)}</ul>}</section>}</> : <div className="catalog-empty"><strong>Choose a skill</strong><p>Its source, package details, scan result, and install action appear here.</p></div>}</article>
+    </div>
+  </section>;
+  /*
+
+  return <section className="capability-settings" aria-label="Skill Hub"><div className="controls-head"><div><span className="eyebrow">Hermes</span><strong>Skill Hub</strong></div></div><p className="capability-description">Preview and scan a skill before starting its Hermes-managed installation.</p><div className="capability-form"><label>Search skills<input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void search(); } }} placeholder="Skill, repository, or topic" /></label><label>Source<select value={source} onChange={event => setSource(event.target.value)}><option value="all">All available sources</option>{sources.filter(item => item.searchable !== false).map(item => <option key={item.id} value={item.id} disabled={item.available === false || item.rateLimited}>{item.label}{item.rateLimited ? " (rate limited)" : ""}</option>)}</select></label><div className="skill-editor-actions"><button className="new-session" type="button" onClick={() => void search()} disabled={busy === "search" || !query.trim()}>{busy === "search" ? "Searching..." : "Search"}</button></div></div>{error && <p className="controls-error">{error}</p>}{notice && <p className="controls-notice">{notice}</p>}{preview && <article className="capability-preview"><strong>{preview.name}</strong><small>{preview.source} / {preview.trustLevel}</small><p>{preview.description}</p><p>Files: {preview.files.join(", ") || "SKILL.md not returned"}</p><pre>{preview.skillMd || "No SKILL.md text returned."}</pre></article>}{scan && <article className="capability-preview"><strong>Security scan: {scan.verdict}</strong><small>Install policy: {scan.policy}</small><p>{scan.summary}</p>{scan.policyReason && <p>{scan.policyReason}</p>}{scan.findings.length > 0 && <ul>{scan.findings.map((finding, index) => <li key={`${finding.file}:${finding.line ?? index}`}><strong>{finding.severity}</strong> {finding.category}: {finding.description}{finding.file ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})` : ""}</li>)}</ul>}</article>}<div className="capability-list">{entries.map(entry => <article className="capability-row capability-row-stacked" key={entry.identifier}><div><strong>{entry.name}</strong><small>{entry.source} / {entry.trustLevel}{entry.repo ? ` / ${entry.repo}` : ""}</small>{entry.description && <small>{entry.description}</small>}</div><div className="capability-row-actions"><button className="plugin-toggle" type="button" onClick={() => void inspect(entry, "preview")} disabled={Boolean(busy)}>{busy === `preview:${entry.identifier}` ? "Loading..." : "Preview"}</button><button className="plugin-toggle" type="button" onClick={() => void inspect(entry, "scan")} disabled={Boolean(busy)}>{busy === `scan:${entry.identifier}` ? "Scanning..." : "Scan"}</button><button className="plugin-toggle" type="button" onClick={() => void install(entry)} disabled={Boolean(busy) || entry.installed}>{entry.installed ? "Installed" : busy === `install:${entry.identifier}` ? "Starting..." : "Install"}</button></div></article>)}</div></section>;
+*/
+}
+
+function McpCatalogBrowser({ adapter }: { adapter: SameOriginHermesAdapter | null }) {
+  const [entries, setEntries] = useState<HermesMcpCatalogEntry[]>([]);
+  const [selected, setSelected] = useState<HermesMcpCatalogEntry | null>(null);
+  const [env, setEnv] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  async function load() { if (!adapter) return; setBusy("load"); setError(null); try { setEntries(await adapter.listMcpCatalog()); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not load the MCP catalog."); } finally { setBusy(null); } }
+  useEffect(() => { void load(); }, [adapter]);
+  async function installSelected() {
+    if (!adapter || !selected || !window.confirm(`Install approved MCP ${selected.name}?`)) return;
+    setBusy(`install:${selected.name}`); setError(null);
+    try { await adapter.installMcpCatalog(selected.name, env); setNotice(selected.needsInstall ? `Hermes started installing ${selected.name} in the background.` : `${selected.name} is installed.`); setEntries(current => current.map(entry => entry.name === selected.name ? { ...entry, installed: true, enabled: true } : entry)); setSelected(null); setEnv({}); }
+    catch (installError) { setError(installError instanceof Error ? installError.message : "Could not install this MCP."); }
+    finally { setBusy(null); }
+  }
+  return <section className="capability-settings catalog-settings" aria-label="MCP catalog">
+    <div className="controls-head"><div><span className="eyebrow">Hermes approved</span><strong>MCP catalog</strong></div><button className="controls-close" type="button" onClick={() => void load()} disabled={busy === "load"}>{busy === "load" ? "Loading..." : "Refresh"}</button></div>
+    <p className="capability-description">Choose a connection to see what it provides, how it runs, and what configuration it needs.</p>
+    {error && <p className="controls-error">{error}</p>}{notice && <p className="controls-notice">{notice}</p>}
+    <div className="catalog-split">
+      <nav className="catalog-menu" aria-label="Approved MCP catalog">{entries.length === 0 ? <p className="controls-note">No approved MCP entries are available.</p> : entries.map(entry => <button type="button" className={selected?.name === entry.name ? "selected" : ""} key={entry.name} onClick={() => { setSelected(entry); setEnv({}); }}><strong>{entry.name}</strong><small>{entry.transport} · {entry.authType}</small><em>{entry.enabled ? "Enabled" : entry.installed ? "Installed" : "Available"}</em></button>)}</nav>
+      <article className="catalog-detail">{selected ? <><header><div><span className="eyebrow">{selected.transport} / {selected.authType}</span><strong>{selected.name}</strong></div><span className={selected.enabled ? "capability-state enabled" : "capability-state"}>{selected.enabled ? "Enabled" : selected.installed ? "Installed" : "Available"}</span></header><p>{selected.description || "No description supplied by this catalog entry."}</p>{selected.url && <dl className="catalog-definition"><div><dt>URL</dt><dd>{selected.url}</dd></div></dl>}{selected.command && <dl className="catalog-definition"><div><dt>Command</dt><dd>{selected.command} {selected.args.join(" ")}</dd></div></dl>}{selected.requiredEnv.length > 0 && <section className="catalog-config"><strong>Configuration</strong><p>Values are sent only to Hermes when you install this connection.</p>{selected.requiredEnv.map(item => <label key={item.name}>{item.name}{item.required ? " (required)" : ""}<input type="password" value={env[item.name] ?? ""} onChange={event => setEnv(current => ({ ...current, [item.name]: event.target.value }))} placeholder={item.prompt ?? item.name} autoComplete="off" /></label>)}</section>}{selected.postInstall && <p className="catalog-meta">{selected.postInstall}</p>}<div className="catalog-actions"><button className="new-session" type="button" onClick={() => void installSelected()} disabled={Boolean(busy) || selected.installed || selected.requiredEnv.some(item => item.required && !(env[item.name] ?? "").trim())}>{selected.installed ? "Installed" : busy === `install:${selected.name}` ? "Installing..." : "Install connection"}</button></div></> : <div className="catalog-empty"><strong>Choose a connection</strong><p>Its transport, required configuration, and installation action appear here.</p></div>}</article>
+    </div>
+  </section>;
+  /*
+  async function install() { if (!adapter || !selected || !window.confirm(`Install approved MCP “${selected.name}”?`)) return; setBusy(`install:${selected.name}`); setError(null); try { await adapter.installMcpCatalog(selected.name, env); setNotice(selected.needsInstall ? `Hermes started installing ${selected.name} in the background.` : `${selected.name} is installed.`); setEntries(current => current.map(entry => entry.name === selected.name ? { ...entry, installed: true, enabled: true } : entry)); setSelected(null); setEnv({}); } catch (installError) { setError(installError instanceof Error ? installError.message : "Could not install this MCP."); } finally { setBusy(null); } }
+  return <section className="capability-settings" aria-label="MCP catalog"><div className="controls-head"><div><span className="eyebrow">Hermes approved</span><strong>MCP catalog</strong></div><button className="controls-close" type="button" onClick={() => void load()} disabled={busy === "load"}>{busy === "load" ? "Loading..." : "Refresh"}</button></div><p className="capability-description">Catalog entries expose connection details and required environment variable names before installation.</p>{error && <p className="controls-error">{error}</p>}{notice && <p className="controls-notice">{notice}</p>}{selected && <article className="capability-preview"><strong>{selected.name}</strong><small>{selected.transport} / {selected.authType}</small><p>{selected.description}</p>{selected.url && <p>URL: {selected.url}</p>}{selected.command && <p>Command: {selected.command} {selected.args.join(" ")}</p>}{selected.requiredEnv.map(item => <label key={item.name}>{item.name}{item.required ? " (required)" : ""}<input type="password" value={env[item.name] ?? ""} onChange={event => setEnv(current => ({ ...current, [item.name]: event.target.value }))} placeholder={item.prompt ?? item.name} autoComplete="off" /></label>)}{selected.postInstall && <p>{selected.postInstall}</p>}<div className="skill-editor-actions"><button className="new-session" type="button" onClick={() => void install()} disabled={Boolean(busy) || selected.requiredEnv.some(item => item.required && !(env[item.name] ?? "").trim())}>{busy === `install:${selected.name}` ? "Installing..." : "Install"}</button><button className="quiet-action" type="button" onClick={() => { setSelected(null); setEnv({}); }} disabled={Boolean(busy)}>Cancel</button></div></article>}<div className="capability-list">{entries.map(entry => <article className="capability-row capability-row-stacked" key={entry.name}><div><strong>{entry.name}</strong><small>{entry.transport} / {entry.authType}{entry.source ? ` / ${entry.source}` : ""}</small><small>{entry.description}</small></div><div className="capability-row-actions"><span>{entry.enabled ? "Enabled" : entry.installed ? "Installed" : "Not installed"}</span><button className="plugin-toggle" type="button" onClick={() => { setSelected(entry); setEnv({}); }} disabled={Boolean(busy) || entry.installed}>{entry.installed ? "Installed" : "Inspect & install"}</button></div></article>)}</div></section>;
+*/
+}
+
+/*
+function ArchivedSessions({ adapter, onChanged }: { adapter: SameOriginHermesAdapter | null; onChanged: () => void }) {
+  const [sessions, setSessions] = useState<HermesSession[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function load() { if (!adapter) return; setBusy("load"); setError(null); try { setSessions(await adapter.listArchivedSessions()); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not load archived Hermes sessions."); } finally { setBusy(null); } }
+  useEffect(() => { void load(); }, [adapter]);
+  async function restore(session: HermesSession) { if (!adapter) return; setBusy(session.id); setError(null); try { await adapter.archiveSession(session, false); setSessions(current => current.filter(item => item.id !== session.id)); onChanged(); } catch (restoreError) { setError(restoreError instanceof Error ? restoreError.message : "Could not restore this session."); } finally { setBusy(null); } }
+  async function remove(session: HermesSession) { if (!adapter || !window.confirm(`Permanently delete archived session “${session.title}”?`)) return; setBusy(session.id); setError(null); try { await adapter.deleteSession(session); setSessions(current => current.filter(item => item.id !== session.id)); } catch (removeError) { setError(removeError instanceof Error ? removeError.message : "Could not delete this session."); } finally { setBusy(null); } }
+  return <section className="capability-settings" aria-label="Archived sessions"><div className="controls-head"><div><span className="eyebrow">Hermes</span><strong>Archived sessions</strong></div><button className="controls-close" type="button" onClick={() => void load()} disabled={busy === "load"}>{busy === "load" ? "Loading..." : "Refresh"}</button></div><p className="capability-description">Archived sessions remain Hermes-owned. Restore them to return them to the regular session list.</p>{error && <p className="controls-error">{error}</p>}<div className="capability-list">{sessions.length === 0 && busy !== "load" ? <p className="controls-note">No archived sessions.</p> : sessions.map(session => <article className="capability-row" key={`${session.profileId}:${session.id}`}><div><strong>{session.title}</strong><small>{session.profileId} / {session.updatedAt}</small>{session.preview && <small>{session.preview}</small>}</div><div className="capability-row-actions"><button className="plugin-toggle" type="button" onClick={() => void restore(session)} disabled={Boolean(busy)}>{busy === session.id ? "Restoring..." : "Restore"}</button><button className="plugin-toggle danger-action" type="button" onClick={() => void remove(session)} disabled={Boolean(busy)}>Delete permanently</button></div></article>)}</div></section>;
+}
+*/
+
 function ProfileSettings({ adapter, onChanged }: { adapter: SameOriginHermesAdapter | null; onChanged: () => void }) {
   const [profiles, setProfiles] = useState<HermesProfile[]>([]);
   const [name, setName] = useState("");
@@ -1427,6 +1595,11 @@ function ProfileSettings({ adapter, onChanged }: { adapter: SameOriginHermesAdap
   const [nextName, setNextName] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailsProfile, setDetailsProfile] = useState<HermesProfile | null>(null);
+  const [description, setDescription] = useState("");
+  const [soul, setSoul] = useState("");
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
   async function load() {
     if (!adapter) return;
     try { setError(null); setProfiles((await adapter.loadWorkspace()).profiles); }
@@ -1454,7 +1627,45 @@ function ProfileSettings({ adapter, onChanged }: { adapter: SameOriginHermesAdap
     catch (removeError) { setError(removeError instanceof Error ? removeError.message : "Could not delete the Hermes profile."); }
     finally { setSaving(false); }
   }
+
+  async function openDetails(profile: HermesProfile) {
+    if (!adapter || saving) return;
+    setDetailsProfile(profile); setDescription(profile.description ?? ""); setProvider(profile.provider ?? ""); setModel(profile.model); setSoul(""); setError(null);
+    try { setSoul(await adapter.getProfileSoul(profile.id)); }
+    catch (detailError) { setError(detailError instanceof Error ? detailError.message : "Could not read this profile's SOUL.md."); }
+  }
+  async function saveDescription() {
+    if (!adapter || !detailsProfile || saving) return;
+    setSaving(true); setError(null);
+    try { await adapter.updateProfileDescription(detailsProfile.id, description); await load(); onChanged(); }
+    catch (detailError) { setError(detailError instanceof Error ? detailError.message : "Could not save the profile description."); }
+    finally { setSaving(false); }
+  }
+  async function saveSoul() {
+    if (!adapter || !detailsProfile || saving) return;
+    setSaving(true); setError(null);
+    try { await adapter.updateProfileSoul(detailsProfile.id, soul); }
+    catch (detailError) { setError(detailError instanceof Error ? detailError.message : "Could not save SOUL.md."); }
+    finally { setSaving(false); }
+  }
+  async function saveModel() {
+    if (!adapter || !detailsProfile || saving || !provider.trim() || !model.trim()) return;
+    setSaving(true); setError(null);
+    try { await adapter.updateProfileModel(detailsProfile.id, provider.trim(), model.trim()); await load(); onChanged(); }
+    catch (detailError) { setError(detailError instanceof Error ? detailError.message : "Could not save the profile model."); }
+    finally { setSaving(false); }
+  }
+  return <section className="capability-settings" aria-label="Profiles">
+    <div className="controls-head"><div><span className="eyebrow">Hermes</span><strong>Profiles</strong></div><button className="controls-close" type="button" onClick={() => void load()} disabled={saving}>Refresh</button></div>
+    <p className="capability-description">Profiles remain Hermes-owned. Descriptions, SOUL.md, and profile models are saved through Hermes.</p>
+    <div className="capability-form"><label>Name<input value={name} onChange={event => setName(event.target.value)} placeholder="research" /></label><label className="profile-clone"><input type="checkbox" checked={cloneDefault} onChange={event => setCloneDefault(event.target.checked)} /> Copy default configuration and skills</label><div className="skill-editor-actions"><button className="new-session" type="button" onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? "Saving..." : "Create profile"}</button></div></div>
+    {error && <p className="controls-error">{error}</p>}
+    {detailsProfile && <section className="capability-form" aria-label={`${detailsProfile.label} details`}><div className="controls-head"><strong>{detailsProfile.label} details</strong><button className="controls-close" type="button" onClick={() => setDetailsProfile(null)} disabled={saving}>Close</button></div><label>Description<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="Role and routing description" /></label><div className="skill-editor-actions"><button className="plugin-toggle" type="button" onClick={() => void saveDescription()} disabled={saving}>Save description</button></div><label>Provider<input value={provider} onChange={event => setProvider(event.target.value)} placeholder="openai" /></label><label>Model<input value={model} onChange={event => setModel(event.target.value)} placeholder="gpt-5" /></label><div className="skill-editor-actions"><button className="plugin-toggle" type="button" onClick={() => void saveModel()} disabled={saving || !provider.trim() || !model.trim()}>Save model</button></div><label>SOUL.md<textarea value={soul} onChange={event => setSoul(event.target.value)} placeholder="Profile instructions" /></label><div className="skill-editor-actions"><button className="plugin-toggle" type="button" onClick={() => void saveSoul()} disabled={saving}>Save SOUL.md</button></div></section>}
+    <div className="capability-list">{profiles.map(profile => <article className="capability-row" key={profile.id}><div><strong>{profile.label}</strong><small>{profile.id} / {profile.provider ? `${profile.provider} / ` : ""}{profile.model}</small>{profile.description && <small>{profile.description}</small>}</div>{renaming === profile.id ? <form className="capability-inline-form" onSubmit={event => { event.preventDefault(); void rename(profile); }}><input autoFocus value={nextName} onChange={event => setNextName(event.target.value)} /><button className="plugin-toggle" type="submit" disabled={saving}>Save</button><button className="plugin-toggle" type="button" onClick={() => setRenaming(null)} disabled={saving}>Cancel</button></form> : <div className="capability-row-actions"><button className="plugin-toggle" type="button" onClick={() => void openDetails(profile)} disabled={saving}>Details</button><button className="plugin-toggle" type="button" onClick={() => { setRenaming(profile.id); setNextName(profile.label); }} disabled={saving}>Rename</button>{profile.id !== "default" && <button className="plugin-toggle danger-action" type="button" onClick={() => void remove(profile)} disabled={saving}>Delete</button>}</div>}</article>)}</div>
+  </section>;
+  /*
   return <section className="capability-settings" aria-label="Profiles"><div className="controls-head"><div><span className="eyebrow">Hermes</span><strong>Profiles</strong></div><button className="controls-close" type="button" onClick={() => void load()} disabled={saving}>Refresh</button></div><p className="capability-description">Profiles remain Hermes-owned. A new profile can start with the default profile configuration and skills.</p><div className="capability-form"><label>Name<input value={name} onChange={event => setName(event.target.value)} placeholder="research" /></label><label className="profile-clone"><input type="checkbox" checked={cloneDefault} onChange={event => setCloneDefault(event.target.checked)} /> Copy default configuration and skills</label><div className="skill-editor-actions"><button className="new-session" type="button" onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? "Saving..." : "Create profile"}</button></div></div>{error && <p className="controls-error">{error}</p>}<div className="capability-list">{profiles.map(profile => <article className="capability-row" key={profile.id}><div><strong>{profile.label}</strong><small>{profile.id} / {profile.model}</small></div>{renaming === profile.id ? <form className="capability-inline-form" onSubmit={event => { event.preventDefault(); void rename(profile); }}><input autoFocus value={nextName} onChange={event => setNextName(event.target.value)} /><button className="plugin-toggle" type="submit" disabled={saving}>Save</button><button className="plugin-toggle" type="button" onClick={() => setRenaming(null)} disabled={saving}>Cancel</button></form> : <div className="capability-row-actions"><button className="plugin-toggle" type="button" onClick={() => { setRenaming(profile.id); setNextName(profile.label); }} disabled={saving}>Rename</button>{profile.id !== "default" && <button className="plugin-toggle danger-action" type="button" onClick={() => void remove(profile)} disabled={saving}>Delete</button>}</div>}</article>)}</div></section>;
+*/
 }
 
 function AppearanceSettings({ skin, onSkinChange }: { skin: SkinId; onSkinChange: (skin: SkinId) => void }) {
@@ -1463,7 +1674,7 @@ function AppearanceSettings({ skin, onSkinChange }: { skin: SkinId; onSkinChange
 
 function SettingsSheet({ adapter, skin, onSkinChange, onClose, onWorkspaceChanged }: { adapter: SameOriginHermesAdapter | null; skin: SkinId; onSkinChange: (skin: SkinId) => void; onClose: () => void; onWorkspaceChanged: () => void }) {
   const [section, setSection] = useState<SettingsSection | "profiles">("appearance");
-  return <div className="settings-scrim" role="presentation" onMouseDown={onClose}><aside className="settings-sheet" role="dialog" aria-modal="true" aria-label="Hermes settings" onMouseDown={event => event.stopPropagation()}><header className="settings-head"><strong>Settings</strong><button className="controls-close" type="button" onClick={onClose}>Close</button></header><nav className="settings-tabs" aria-label="Settings sections">{(["appearance", "model", "profiles", "skills", "mcp", "plugins"] as Array<SettingsSection | "profiles">).map(item => <button key={item} type="button" className={section === item ? "active" : ""} onClick={() => setSection(item)}>{item === "appearance" ? "Appearance" : item === "model" ? "Model" : item === "mcp" ? "MCP" : item[0].toUpperCase() + item.slice(1)}</button>)}</nav>{section === "appearance" ? <AppearanceSettings skin={skin} onSkinChange={onSkinChange} /> : section === "model" ? <HermesControls adapter={adapter} onClose={onClose} /> : section === "profiles" ? <ProfileSettings adapter={adapter} onChanged={onWorkspaceChanged} /> : <CapabilitySettings adapter={adapter} section={section} />}</aside></div>;
+  return createPortal(<div className="settings-scrim" role="presentation" onClick={event => { if (event.target === event.currentTarget) onClose(); }}><aside className="settings-sheet" role="dialog" aria-modal="true" aria-label="Hermes settings"><header className="settings-head"><strong>Settings</strong></header><nav className="settings-tabs" aria-label="Settings sections">{(["appearance", "model", "profiles", "skills", "skillHub", "mcp", "mcpCatalog", "plugins"] as Array<SettingsSection | "profiles">).map(item => <button key={item} type="button" className={section === item ? "active" : ""} onClick={() => setSection(item)}>{item === "appearance" ? "Appearance" : item === "model" ? "Model" : item === "skillHub" ? "Skill Hub" : item === "mcp" ? "MCP" : item === "mcpCatalog" ? "MCP catalog" : item[0].toUpperCase() + item.slice(1)}</button>)}</nav>{section === "appearance" ? <AppearanceSettings skin={skin} onSkinChange={onSkinChange} /> : section === "model" ? <HermesControls adapter={adapter} onClose={onClose} /> : section === "profiles" ? <ProfileSettings adapter={adapter} onChanged={onWorkspaceChanged} /> : section === "skillHub" ? <SkillHubBrowser adapter={adapter} /> : section === "mcpCatalog" ? <McpCatalogBrowser adapter={adapter} /> : <CapabilitySettings adapter={adapter} section={section} />}</aside><button className="settings-dismiss" type="button" onClick={onClose} aria-label="Close settings">Close</button></div>, document.body);
 }
 
 function modelId(option: Pick<HermesModelOption, "provider" | "model">) {

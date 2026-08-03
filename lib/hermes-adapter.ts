@@ -4,6 +4,8 @@ export type HermesProfile = {
   id: string;
   label: string;
   model: string;
+  provider?: string;
+  description?: string;
   gateway: "running" | "stopped";
 };
 
@@ -114,6 +116,28 @@ export type HermesMcpTestResult = {
   tools: Array<{ name: string; description?: string }>;
 };
 
+export type HermesSkillHubSource = { id: string; label: string; searchable?: boolean; available?: boolean; rateLimited?: boolean };
+export type HermesSkillHubEntry = { name: string; description?: string; source: string; identifier: string; trustLevel: string; repo?: string; tags: string[]; installed?: boolean };
+export type HermesSkillHubPreview = HermesSkillHubEntry & { skillMd: string; files: string[] };
+export type HermesSkillHubScan = { identifier: string; verdict: string; summary: string; policy: "allow" | "ask" | "block"; policyReason?: string; findings: Array<{ severity: string; category: string; file: string; line?: number; description: string }> };
+export type HermesSkillHubBrowse = { entries: HermesSkillHubEntry[]; total: number; tags: Array<{ name: string; count: number }>; providers: Array<{ name: string; count: number }> };
+
+export type HermesMcpCatalogEntry = {
+  name: string;
+  description: string;
+  source?: string;
+  transport: string;
+  authType: string;
+  requiredEnv: Array<{ name: string; prompt?: string; required: boolean }>;
+  command?: string;
+  args: string[];
+  url?: string;
+  installed: boolean;
+  enabled: boolean;
+  needsInstall: boolean;
+  postInstall?: string;
+};
+
 export type HermesPlugin = {
   name: string;
   version?: string;
@@ -147,7 +171,6 @@ export interface HermesAdapter {
   setProfile?(profile: HermesProfile): void;
   searchSessions?(query: string): Promise<HermesSessionSearchResult[]>;
   renameSession?(session: HermesSession, title: string): Promise<void>;
-  archiveSession?(session: HermesSession, archived: boolean): Promise<void>;
   deleteSession?(session: HermesSession): Promise<void>;
   exportSession?(session: HermesSession): Promise<Blob>;
   uploadImage?(file: File): Promise<{ path: string; name: string }>;
@@ -215,7 +238,10 @@ export type HermesCronJobDraft = {
   name: string;
   prompt: string;
   schedule: string;
+  deliver: string;
 };
+
+export type HermesCronDeliveryTarget = { id: string; name: string; homeTargetSet: boolean; homeEnvVar?: string };
 
 const reasoningEfforts: HermesReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
@@ -344,12 +370,25 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     await this.fetchJson(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
   }
 
-  async renameSession(session: HermesSession, title: string): Promise<void> {
-    await this.fetchJson(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "PATCH", body: JSON.stringify({ title, profile: session.profileId }) });
+  async getProfileSoul(name: string): Promise<string> {
+    const result = await this.fetchJson<{ content?: unknown }>(`/api/profiles/${encodeURIComponent(name)}/soul`);
+    return typeof result.content === "string" ? result.content : "";
   }
 
-  async archiveSession(session: HermesSession, archived: boolean): Promise<void> {
-    await this.fetchJson(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "PATCH", body: JSON.stringify({ archived, profile: session.profileId }) });
+  async updateProfileSoul(name: string, content: string): Promise<void> {
+    await this.fetchJson(`/api/profiles/${encodeURIComponent(name)}/soul`, { method: "PUT", body: JSON.stringify({ content }) });
+  }
+
+  async updateProfileDescription(name: string, description: string): Promise<void> {
+    await this.fetchJson(`/api/profiles/${encodeURIComponent(name)}/description`, { method: "PUT", body: JSON.stringify({ description }) });
+  }
+
+  async updateProfileModel(name: string, provider: string, model: string): Promise<void> {
+    await this.fetchJson(`/api/profiles/${encodeURIComponent(name)}/model`, { method: "PUT", body: JSON.stringify({ provider, model }) });
+  }
+
+  async renameSession(session: HermesSession, title: string): Promise<void> {
+    await this.fetchJson(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "PATCH", body: JSON.stringify({ title, profile: session.profileId }) });
   }
 
   async deleteSession(session: HermesSession): Promise<void> {
@@ -710,6 +749,63 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     await this.fetchJson(path, { method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) });
   }
 
+  async listSkillHubSources(): Promise<{ sources: HermesSkillHubSource[]; featured: HermesSkillHubEntry[] }> {
+    const result = await this.fetchJson<{ sources?: unknown[]; featured?: unknown[] }>("/api/skills/hub/sources");
+    return {
+      sources: (result.sources ?? []).flatMap(source => this.toSkillHubSource(source)),
+      featured: (result.featured ?? []).flatMap(entry => this.toSkillHubEntry(entry))
+    };
+  }
+
+  async searchSkillHub(query: string, source = "all"): Promise<HermesSkillHubEntry[]> {
+    const params = new URLSearchParams({ q: query, source, limit: "50" });
+    const result = await this.fetchJson<{ results?: unknown[] }>(`/api/skills/hub/search?${params}`);
+    return (result.results ?? []).flatMap(entry => this.toSkillHubEntry(entry));
+  }
+
+  async browseSkillHub({ tag = "", provider = "", offset = 0 }: { tag?: string; provider?: string; offset?: number } = {}): Promise<HermesSkillHubBrowse> {
+    const params = new URLSearchParams({ tag, provider, offset: String(offset), limit: "50" });
+    const result = await this.fetchJson<{ results?: unknown[]; total?: unknown; tags?: unknown[]; providers?: unknown[] }>(`/api/skills/hub/browse?${params}`);
+    const facets = (values: unknown[] | undefined) => (values ?? []).flatMap(value => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const item = value as Record<string, unknown>;
+      return typeof item.name === "string" && typeof item.count === "number" ? [{ name: item.name, count: item.count }] : [];
+    });
+    return { entries: (result.results ?? []).flatMap(entry => this.toSkillHubEntry(entry)), total: typeof result.total === "number" ? result.total : 0, tags: facets(result.tags), providers: facets(result.providers) };
+  }
+
+  async previewSkillHub(identifier: string): Promise<HermesSkillHubPreview> {
+    const result = await this.fetchJson<unknown>(`/api/skills/hub/preview?identifier=${encodeURIComponent(identifier)}`);
+    const entry = this.toSkillHubEntry(result)[0];
+    if (!entry || !result || typeof result !== "object" || Array.isArray(result)) throw new Error("Hermes returned an invalid skill preview.");
+    const payload = result as Record<string, unknown>;
+    return { ...entry, skillMd: typeof payload.skill_md === "string" ? payload.skill_md : "", files: Array.isArray(payload.files) ? payload.files.filter((file): file is string => typeof file === "string") : [] };
+  }
+
+  async scanSkillHub(identifier: string): Promise<HermesSkillHubScan> {
+    const result = await this.fetchJson<unknown>(`/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`);
+    if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("Hermes returned an invalid skill scan.");
+    const payload = result as Record<string, unknown>;
+    const policy = payload.policy === "allow" || payload.policy === "ask" || payload.policy === "block" ? payload.policy : "ask";
+    return {
+      identifier: typeof payload.identifier === "string" ? payload.identifier : identifier,
+      verdict: typeof payload.verdict === "string" ? payload.verdict : "unknown",
+      summary: typeof payload.summary === "string" ? payload.summary : "No scan summary returned.",
+      policy,
+      policyReason: typeof payload.policy_reason === "string" ? payload.policy_reason : undefined,
+      findings: Array.isArray(payload.findings) ? payload.findings.flatMap(finding => finding && typeof finding === "object" && !Array.isArray(finding) && typeof (finding as Record<string, unknown>).description === "string" ? [{ severity: typeof (finding as Record<string, unknown>).severity === "string" ? (finding as Record<string, unknown>).severity as string : "unknown", category: typeof (finding as Record<string, unknown>).category === "string" ? (finding as Record<string, unknown>).category as string : "unknown", file: typeof (finding as Record<string, unknown>).file === "string" ? (finding as Record<string, unknown>).file as string : "", line: typeof (finding as Record<string, unknown>).line === "number" ? (finding as Record<string, unknown>).line as number : undefined, description: (finding as Record<string, unknown>).description as string }] : []) : []
+    };
+  }
+
+  async listMcpCatalog(): Promise<HermesMcpCatalogEntry[]> {
+    const result = await this.fetchJson<{ entries?: unknown[] }>("/api/mcp/catalog");
+    return (result.entries ?? []).flatMap(entry => this.toMcpCatalogEntry(entry));
+  }
+
+  async installMcpCatalog(name: string, env: Record<string, string>, enable = true): Promise<void> {
+    await this.fetchJson("/api/mcp/catalog/install", { method: "POST", body: JSON.stringify({ name, env, enable }) });
+  }
+
   async listPlugins(): Promise<HermesPlugin[]> {
     const result = await this.requestGateway<{ plugins?: unknown[] }>("plugins.manage", { action: "list" });
     return (result.plugins ?? []).flatMap(plugin => this.toPlugin(plugin));
@@ -730,7 +826,7 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     const query = new URLSearchParams({ profile: profileId });
     const result = await this.fetchJson<unknown>(`/api/cron/jobs?${query}`, {
       method: "POST",
-      body: JSON.stringify({ name: draft.name, prompt: draft.prompt, schedule: draft.schedule, deliver: "local" })
+      body: JSON.stringify({ name: draft.name, prompt: draft.prompt, schedule: draft.schedule, deliver: draft.deliver })
     });
     const job = this.toCronJob(result)[0];
     if (!job) throw new Error("Hermes did not return the created cron job.");
@@ -743,9 +839,14 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     const suffix = query.toString() ? `?${query}` : "";
     const result = await this.fetchJson<unknown>(`/api/cron/jobs/${encodeURIComponent(job.id)}${suffix}`, {
       method: "PUT",
-      body: JSON.stringify({ updates: { name: draft.name, prompt: draft.prompt, schedule: draft.schedule } })
+      body: JSON.stringify({ updates: { name: draft.name, prompt: draft.prompt, schedule: draft.schedule, deliver: draft.deliver } })
     });
     return this.toCronJob(result)[0] ?? job;
+  }
+
+  async listCronDeliveryTargets(): Promise<HermesCronDeliveryTarget[]> {
+    const result = await this.fetchJson<{ targets?: unknown[] }>("/api/cron/delivery-targets");
+    return (result.targets ?? []).flatMap(target => target && typeof target === "object" && !Array.isArray(target) && typeof (target as Record<string, unknown>).id === "string" ? [{ id: (target as Record<string, unknown>).id as string, name: typeof (target as Record<string, unknown>).name === "string" ? (target as Record<string, unknown>).name as string : (target as Record<string, unknown>).id as string, homeTargetSet: (target as Record<string, unknown>).home_target_set !== false, homeEnvVar: typeof (target as Record<string, unknown>).home_env_var === "string" ? (target as Record<string, unknown>).home_env_var as string : undefined }] : []);
   }
 
   async deleteCronJob(job: HermesCronJob): Promise<void> {
@@ -863,6 +964,29 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     }];
   }
 
+  private toSkillHubSource(value: unknown): HermesSkillHubSource[] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const source = value as Record<string, unknown>;
+    if (typeof source.id !== "string" || !source.id) return [];
+    return [{ id: source.id, label: typeof source.label === "string" ? source.label : source.id, searchable: source.searchable !== false, available: source.available !== false, rateLimited: source.rate_limited === true }];
+  }
+
+  private toSkillHubEntry(value: unknown): HermesSkillHubEntry[] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.identifier !== "string" || !entry.identifier) return [];
+    return [{
+      name: typeof entry.name === "string" && entry.name ? entry.name : entry.identifier,
+      description: typeof entry.description === "string" ? entry.description : undefined,
+      source: typeof entry.source === "string" ? entry.source : "community",
+      identifier: entry.identifier,
+      trustLevel: typeof entry.trust_level === "string" ? entry.trust_level : "community",
+      repo: typeof entry.repo === "string" ? entry.repo : undefined,
+      tags: Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      installed: entry.installed === true
+    }];
+  }
+
   private toMcpServer(value: unknown): HermesMcpServer[] {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
     const server = value as Record<string, unknown>;
@@ -874,6 +998,27 @@ export class SameOriginHermesAdapter implements HermesAdapter {
       enabled: server.enabled !== false,
       transport,
       args: Array.isArray(server.args) ? server.args.filter((arg): arg is string => typeof arg === "string") : undefined
+    }];
+  }
+
+  private toMcpCatalogEntry(value: unknown): HermesMcpCatalogEntry[] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.name !== "string" || !entry.name) return [];
+    return [{
+      name: entry.name,
+      description: typeof entry.description === "string" ? entry.description : "",
+      source: typeof entry.source === "string" ? entry.source : undefined,
+      transport: typeof entry.transport === "string" ? entry.transport : "unknown",
+      authType: typeof entry.auth_type === "string" ? entry.auth_type : "none",
+      requiredEnv: Array.isArray(entry.required_env) ? entry.required_env.flatMap(env => env && typeof env === "object" && !Array.isArray(env) && typeof (env as Record<string, unknown>).name === "string" ? [{ name: (env as Record<string, unknown>).name as string, prompt: typeof (env as Record<string, unknown>).prompt === "string" ? (env as Record<string, unknown>).prompt as string : undefined, required: (env as Record<string, unknown>).required === true }] : []) : [],
+      command: typeof entry.command === "string" ? entry.command : undefined,
+      args: Array.isArray(entry.args) ? entry.args.filter((arg): arg is string => typeof arg === "string") : [],
+      url: typeof entry.url === "string" ? entry.url : undefined,
+      installed: entry.installed === true,
+      enabled: entry.enabled === true,
+      needsInstall: entry.needs_install === true,
+      postInstall: typeof entry.post_install === "string" ? entry.post_install : undefined
     }];
   }
 
@@ -1021,7 +1166,14 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     const id = typeof profile.name === "string" ? profile.name : typeof profile.id === "string" ? profile.id : "";
     if (!id) return [];
     const model = typeof profile.model === "string" ? profile.model : typeof profile.model_name === "string" ? profile.model_name : "Hermes Gateway";
-    return [{ id, label: typeof profile.display_name === "string" ? profile.display_name : typeof profile.label === "string" ? profile.label : id, model, gateway: "running" }];
+    return [{
+      id,
+      label: typeof profile.display_name === "string" ? profile.display_name : typeof profile.label === "string" ? profile.label : id,
+      model,
+      provider: typeof profile.provider === "string" ? profile.provider : undefined,
+      description: typeof profile.description === "string" ? profile.description : undefined,
+      gateway: "running"
+    }];
   }
 
   private toTranscript(messages: GatewaySessionResume["messages"]): HermesSession["messages"] {
