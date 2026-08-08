@@ -120,7 +120,6 @@ export type HermesSkillHubSource = { id: string; label: string; searchable?: boo
 export type HermesSkillHubEntry = { name: string; description?: string; source: string; identifier: string; trustLevel: string; repo?: string; tags: string[]; installed?: boolean };
 export type HermesSkillHubPreview = HermesSkillHubEntry & { skillMd: string; files: string[] };
 export type HermesSkillHubScan = { identifier: string; verdict: string; summary: string; policy: "allow" | "ask" | "block"; policyReason?: string; findings: Array<{ severity: string; category: string; file: string; line?: number; description: string }> };
-export type HermesSkillHubBrowse = { entries: HermesSkillHubEntry[]; total: number; tags: Array<{ name: string; count: number }>; providers: Array<{ name: string; count: number }> };
 
 export type HermesMcpCatalogEntry = {
   name: string;
@@ -761,17 +760,6 @@ export class SameOriginHermesAdapter implements HermesAdapter {
     const params = new URLSearchParams({ q: query, source, limit: "50" });
     const result = await this.fetchJson<{ results?: unknown[] }>(`/api/skills/hub/search?${params}`);
     return (result.results ?? []).flatMap(entry => this.toSkillHubEntry(entry));
-  }
-
-  async browseSkillHub({ tag = "", provider = "", offset = 0 }: { tag?: string; provider?: string; offset?: number } = {}): Promise<HermesSkillHubBrowse> {
-    const params = new URLSearchParams({ tag, provider, offset: String(offset), limit: "50" });
-    const result = await this.fetchJson<{ results?: unknown[]; total?: unknown; tags?: unknown[]; providers?: unknown[] }>(`/api/skills/hub/browse?${params}`);
-    const facets = (values: unknown[] | undefined) => (values ?? []).flatMap(value => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-      const item = value as Record<string, unknown>;
-      return typeof item.name === "string" && typeof item.count === "number" ? [{ name: item.name, count: item.count }] : [];
-    });
-    return { entries: (result.results ?? []).flatMap(entry => this.toSkillHubEntry(entry)), total: typeof result.total === "number" ? result.total : 0, tags: facets(result.tags), providers: facets(result.providers) };
   }
 
   async previewSkillHub(identifier: string): Promise<HermesSkillHubPreview> {

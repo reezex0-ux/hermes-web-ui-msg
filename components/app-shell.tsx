@@ -27,7 +27,6 @@ import {
   type HermesSessionSearchResult,
   type HermesSlashCommand,
   type HermesSkill,
-  type HermesSkillHubBrowse,
   type HermesSkillHubEntry,
   type HermesSkillHubPreview,
   type HermesSkillHubScan,
@@ -504,6 +503,7 @@ export function AppShell() {
   return <div className={`app-shell ${navigationCollapsed ? "navigation-collapsed" : ""}`}>
     <header className="topbar">
       <button className="mobile-menu" type="button" onClick={() => setNavigationOpen(true)} aria-label="Open sessions">Sessions</button>
+      <strong className="mobile-title" aria-hidden="true">Hermes</strong>
       <div className="connection"><span className={`status-dot ${loadError ? "warning" : ""}`} />{loadError ?? `${workspace.gatewayState} / Hermes-owned`}</div>
     </header>
     {navigationOpen && <button className="navigation-backdrop" type="button" aria-label="Close sessions" onClick={() => setNavigationOpen(false)} />}
@@ -1476,11 +1476,6 @@ function SkillHubBrowser({ adapter }: { adapter: SameOriginHermesAdapter | null 
   const [entries, setEntries] = useState<HermesSkillHubEntry[]>([]);
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("all");
-  const [tag, setTag] = useState("");
-  const [provider, setProvider] = useState("");
-  const [browseTotal, setBrowseTotal] = useState(0);
-  const [tags, setTags] = useState<Array<{ name: string; count: number }>>([]);
-  const [providers, setProviders] = useState<Array<{ name: string; count: number }>>([]);
   const [selectedIdentifier, setSelectedIdentifier] = useState("");
   const [preview, setPreview] = useState<HermesSkillHubPreview | null>(null);
   const [scan, setScan] = useState<HermesSkillHubScan | null>(null);
@@ -1488,23 +1483,22 @@ function SkillHubBrowser({ adapter }: { adapter: SameOriginHermesAdapter | null 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function browse(nextTag = tag, nextProvider = provider, offset = 0, append = false) {
+  async function loadFeatured() {
     if (!adapter) return;
-    setBusy("browse"); setError(null); setPreview(null); setScan(null);
+    setBusy("sources"); setError(null); setPreview(null); setScan(null);
     try {
-      const hub: HermesSkillHubBrowse = await adapter.browseSkillHub({ tag: nextTag, provider: nextProvider, offset });
-      setEntries(current => append ? [...current, ...hub.entries.filter(entry => !current.some(item => item.identifier === entry.identifier))] : hub.entries);
-      setBrowseTotal(hub.total); setTags(hub.tags); setProviders(hub.providers);
-    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not browse the Hermes Skill Hub."); }
+      const hub = await adapter.listSkillHubSources();
+      setSources(hub.sources); setEntries(hub.featured); setSelectedIdentifier(""); setQuery("");
+    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not load official Hermes Skill Hub sources."); }
     finally { setBusy(null); }
   }
 
-  useEffect(() => { if (!adapter) return; void (async () => { try { setError(null); const [hub] = await Promise.all([adapter.listSkillHubSources(), browse("", "")]); setSources(hub.sources); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Could not load the Hermes Skill Hub."); } })(); }, [adapter]);
+  useEffect(() => { if (adapter) void loadFeatured(); }, [adapter]);
 
   async function search() {
     if (!adapter || !query.trim()) return;
     setBusy("search"); setError(null); setPreview(null); setScan(null);
-    try { setEntries(await adapter.searchSkillHub(query.trim(), source)); setBrowseTotal(0); }
+    try { setEntries(await adapter.searchSkillHub(query.trim(), source)); setSelectedIdentifier(""); }
     catch (searchError) { setError(searchError instanceof Error ? searchError.message : "Could not search the Skill Hub."); }
     finally { setBusy(null); }
   }
@@ -1528,12 +1522,12 @@ function SkillHubBrowser({ adapter }: { adapter: SameOriginHermesAdapter | null 
   const selectedEntry = entries.find(entry => entry.identifier === selectedIdentifier) ?? entries[0] ?? null;
   return <section className="capability-settings catalog-settings" aria-label="Skill Hub">
     <div className="controls-head"><div><span className="eyebrow">Hermes catalog</span><strong>Skill Hub</strong></div></div>
-    <p className="capability-description">Browse the full Hermes Skills Index by topic or publisher. Search is optional when you already know a skill, repository, or topic.</p>
+    <p className="capability-description">Search the official Hermes Skill Hub, or inspect featured skills returned by its configured sources.</p>
     <div className="catalog-search"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void search(); } }} placeholder="Search a skill, repository, or topic" /><select value={source} onChange={event => setSource(event.target.value)} aria-label="Skill source"><option value="all">All sources</option>{sources.filter(item => item.searchable !== false).map(item => <option key={item.id} value={item.id} disabled={item.available === false || item.rateLimited}>{item.label}{item.rateLimited ? " (rate limited)" : ""}</option>)}</select><button className="new-session" type="button" onClick={() => void search()} disabled={busy === "search" || !query.trim()}>{busy === "search" ? "Searching..." : "Search"}</button></div>
-    <div className="catalog-filters"><label>Topic<select value={tag} onChange={event => { const value = event.target.value; setTag(value); setQuery(""); void browse(value, provider); }}><option value="">All topics</option>{tags.map(item => <option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}</select></label><label>Publisher<select value={provider} onChange={event => { const value = event.target.value; setProvider(value); setQuery(""); void browse(tag, value); }}><option value="">All publishers</option>{providers.map(item => <option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}</select></label><button className="quiet-action" type="button" onClick={() => { setTag(""); setProvider(""); setQuery(""); void browse("", ""); }} disabled={busy === "browse" || (!tag && !provider && !query)}>Clear</button><span>{query.trim() ? `${entries.length} search results` : busy === "browse" ? "Loading catalog..." : `${browseTotal.toLocaleString()} skills`}</span></div>
+    <div className="catalog-filters"><button className="quiet-action" type="button" onClick={() => void loadFeatured()} disabled={busy === "sources"}>{busy === "sources" ? "Loading..." : "Show featured"}</button><span>{query.trim() ? `${entries.length} search results` : `${entries.length} featured skills from official sources`}</span></div>
     {error && <p className="controls-error">{error}</p>}{notice && <p className="controls-notice">{notice}</p>}
     <div className="catalog-split">
-      <nav className="catalog-menu" aria-label="Skill catalog"><p className="catalog-menu-title">{query.trim() ? "Search results" : "Browse skills"}</p>{entries.length === 0 ? <p className="controls-note">No skills match this selection.</p> : entries.map(entry => <button type="button" className={selectedEntry?.identifier === entry.identifier ? "selected" : ""} key={entry.identifier} onClick={() => { setSelectedIdentifier(entry.identifier); setPreview(null); setScan(null); }}><strong>{entry.name}</strong><small>{entry.source} · {entry.trustLevel}</small>{entry.installed && <em>Installed</em>}</button>)}{!query.trim() && entries.length < browseTotal && <button className="catalog-load-more" type="button" onClick={() => void browse(tag, provider, entries.length, true)} disabled={busy === "browse"}>{busy === "browse" ? "Loading..." : `Load 50 more (${browseTotal - entries.length} remaining)`}</button>}</nav>
+      <nav className="catalog-menu" aria-label="Skill catalog"><p className="catalog-menu-title">{query.trim() ? "Search results" : "Featured skills"}</p>{entries.length === 0 ? <p className="controls-note">No skills match this selection.</p> : entries.map(entry => <button type="button" className={selectedEntry?.identifier === entry.identifier ? "selected" : ""} key={entry.identifier} onClick={() => { setSelectedIdentifier(entry.identifier); setPreview(null); setScan(null); }}><strong>{entry.name}</strong><small>{entry.source} · {entry.trustLevel}</small>{entry.installed && <em>Installed</em>}</button>)}</nav>
       <article className="catalog-detail">{selectedEntry ? <><header><div><span className="eyebrow">{selectedEntry.source} / {selectedEntry.trustLevel}</span><strong>{selectedEntry.name}</strong></div>{selectedEntry.installed && <span className="capability-state enabled">Installed</span>}</header><p>{selectedEntry.description || "No description supplied by this source."}</p>{selectedEntry.repo && <p className="catalog-meta">Repository: {selectedEntry.repo}</p>}{selectedEntry.tags.length > 0 && <p className="catalog-meta">Tags: {selectedEntry.tags.join(", ")}</p>}<div className="catalog-actions"><button className="plugin-toggle" type="button" onClick={() => void inspect(selectedEntry, "preview")} disabled={Boolean(busy)}>{busy === `preview:${selectedEntry.identifier}` ? "Loading..." : "Read SKILL.md"}</button><button className="plugin-toggle" type="button" onClick={() => void inspect(selectedEntry, "scan")} disabled={Boolean(busy)}>{busy === `scan:${selectedEntry.identifier}` ? "Scanning..." : "Security scan"}</button><button className="new-session" type="button" onClick={() => void install(selectedEntry)} disabled={Boolean(busy) || selectedEntry.installed}>{selectedEntry.installed ? "Installed" : busy === `install:${selectedEntry.identifier}` ? "Starting..." : "Install"}</button></div>{preview && <section className="catalog-inspection"><strong>SKILL.md</strong><small>{preview.files.join(", ") || "No file list returned"}</small><pre>{preview.skillMd || "No SKILL.md text returned."}</pre></section>}{scan && <section className="catalog-inspection"><strong>Security scan: {scan.verdict}</strong><small>Install policy: {scan.policy}</small><p>{scan.summary}</p>{scan.policyReason && <p>{scan.policyReason}</p>}{scan.findings.length > 0 && <ul>{scan.findings.map((finding, index) => <li key={`${finding.file}:${finding.line ?? index}`}><strong>{finding.severity}</strong> {finding.category}: {finding.description}</li>)}</ul>}</section>}</> : <div className="catalog-empty"><strong>Choose a skill</strong><p>Its source, package details, scan result, and install action appear here.</p></div>}</article>
     </div>
   </section>;
